@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from app.agents.clarify import ClarifyAgent
 from app.chat.prompts import SYSTEM_PROMPT
@@ -19,12 +19,28 @@ class ChatSession:
         self.registry = ToolRegistry(self.provider)
         self.llm = OpenRouterToolLoop(OpenRouterClient(self.config.openrouter), self.registry)
         self.clarify_agent = ClarifyAgent()
-        self.messages: list[dict[str, str]] = [{"role": "system", "content": SYSTEM_PROMPT}]
+        self.messages: list[dict[str, object]] = [{"role": "system", "content": SYSTEM_PROMPT}]
+
+    @staticmethod
+    def _sanitize_text(value: str) -> str:
+        if not any(0xD800 <= ord(char) <= 0xDFFF for char in value):
+            return value
+        return value.encode("utf-8", "surrogateescape").decode("utf-8", "replace")
+
+    @classmethod
+    def _sanitize_payload(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            return cls._sanitize_text(value)
+        if isinstance(value, list):
+            return [cls._sanitize_payload(item) for item in value]
+        if isinstance(value, dict):
+            return {key: cls._sanitize_payload(item) for key, item in value.items()}
+        return value
 
     def run(self) -> None:
         print("TickTick chat agent запущен. Напишите сообщение. Для выхода: exit")
         while True:
-            user_input = input("you> ").strip()
+            user_input = self._sanitize_text(input("you> ").strip())
             if user_input.lower() in {"exit", "quit"}:
                 print("bye")
                 break
@@ -33,6 +49,7 @@ class ChatSession:
             self.messages.append({"role": "user", "content": user_input})
             self._maybe_add_clarify_context(user_input)
             try:
+                self.messages = self._sanitize_payload(self.messages)
                 answer, updated_messages = self.llm.run_turn(self.messages)
             except Exception as exc:
                 answer = f"Не удалось обработать ход: {exc}"

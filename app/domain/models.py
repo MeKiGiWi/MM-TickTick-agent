@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 
 TaskStatus = Literal["normal", "completed"]
@@ -10,16 +10,36 @@ ClarifyClassification = Literal["single_action", "project", "unclear"]
 
 
 class Task(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
     id: str
     title: str
-    project_id: str = "inbox"
+    project_id: str = Field(
+        default="inbox",
+        validation_alias=AliasChoices("project_id", "projectId"),
+    )
     status: TaskStatus = "normal"
     priority: int = 0
-    due_date: Optional[str] = None
+    due_date: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("due_date", "dueDate"),
+    )
     content: Optional[str] = None
-    is_overdue: bool = False
+    is_overdue: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("is_overdue", "isOverdue"),
+    )
     tags: list[str] = Field(default_factory=list)
     subtasks: list["Task"] = Field(default_factory=list)
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def _normalize_status(cls, value: Any) -> TaskStatus:
+        if value in ("normal", "open", 0, "0", None):
+            return "normal"
+        if value in ("completed", 2, "2"):
+            return "completed"
+        raise ValueError(f"Unsupported TickTick task status: {value}")
 
 
 class Project(BaseModel):
@@ -53,7 +73,8 @@ class TickTickCredentials(BaseModel):
 class OpenRouterConfig(BaseModel):
     api_key: str
     base_url: str = "https://openrouter.ai/api/v1"
-    model: str = "meta-llama/llama-3.3-70b-instruct:free"
+    model: str = "openrouter/free"
+    reasoning_enabled: bool = True
 
 
 class AppConfig(BaseModel):

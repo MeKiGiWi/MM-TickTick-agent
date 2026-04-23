@@ -1,5 +1,9 @@
 FROM python:3.11-slim
 
+ENV PYTHONUTF8=1 \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8
+
 WORKDIR /app
 
 COPY pyproject.toml README.md ./

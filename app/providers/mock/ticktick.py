@@ -42,6 +42,30 @@ class MockTickTickProvider(TickTickProvider):
         }
         self.counter = 100
 
+    def create_task(
+        self,
+        *,
+        title: str,
+        project_id: Optional[str] = None,
+        content: Optional[str] = None,
+        due_date: Optional[str] = None,
+        priority: Optional[int] = None,
+    ) -> Task:
+        target_project_id = project_id or "inbox"
+        if target_project_id not in self.projects:
+            raise ValueError(f"Проект '{target_project_id}' не найден.")
+        self.counter += 1
+        task = Task(
+            id=f"task-{self.counter}",
+            title=title,
+            project_id=target_project_id,
+            content=content,
+            due_date=due_date,
+            priority=priority or 0,
+        )
+        self.tasks[task.id] = task
+        return deepcopy(task)
+
     def list_tasks(
         self,
         *,

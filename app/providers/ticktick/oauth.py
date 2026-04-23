@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import base64
+import os
 import secrets
+import sys
 import threading
 import webbrowser
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 from typing import Dict, Optional
 from urllib.parse import parse_qs, urlencode, urlparse
 
@@ -106,12 +109,41 @@ class OAuthCallbackServer(HTTPServer):
     oauth_params: Dict[str, str]
 
 
-def _wait_for_callback(redirect_uri: str, timeout_seconds: float = 120.0) -> Optional[Dict[str, str]]:
+def _is_container_environment() -> bool:
+    if os.getenv("DOTENV_RUNNING_IN_CONTAINER") == "1":
+        return True
+    if Path("/.dockerenv").exists():
+        return True
+    return False
+
+
+def _can_open_browser() -> bool:
+    if _is_container_environment():
+        return False
+    if os.name == "nt" or sys.platform == "darwin":
+        return True
+    return bool(os.getenv("DISPLAY") or os.getenv("WAYLAND_DISPLAY"))
+
+
+def _resolve_callback_bind_host(redirect_uri: str) -> Optional[str]:
     parsed = urlparse(redirect_uri)
     if parsed.hostname not in {"127.0.0.1", "localhost"} or not parsed.port:
         return None
+    if _is_container_environment():
+        return "0.0.0.0"
+    return parsed.hostname
 
-    server = OAuthCallbackServer((parsed.hostname, parsed.port), _OAuthCallbackHandler)
+
+def _wait_for_callback(redirect_uri: str, timeout_seconds: float = 120.0) -> Optional[Dict[str, str]]:
+    parsed = urlparse(redirect_uri)
+    bind_host = _resolve_callback_bind_host(redirect_uri)
+    if bind_host is None:
+        return None
+
+    try:
+        server = OAuthCallbackServer((bind_host, parsed.port), _OAuthCallbackHandler)
+    except OSError:
+        return None
     server.oauth_params = {}
     server.timeout = 1.0
     stop_event = threading.Event()
@@ -135,6 +167,7 @@ def run_oauth_login(
     *,
     oauth_client: Optional[TickTickOAuthClient] = None,
     open_browser: bool = True,
+    callback_timeout_seconds: float = 120.0,
 ) -> TickTickOAuthResult:
     if not credentials.client_id or not credentials.client_secret or not credentials.redirect_uri:
         raise ValueError("Для TickTick OAuth нужны client_id, client_secret и redirect_uri")
@@ -150,22 +183,26 @@ def run_oauth_login(
     )
 
     print("\nTickTick OAuth login")
-    print("1. Откройте ссылку авторизации ниже")
-    print("2. Подтвердите доступ в TickTick")
-    print("3. Если авто-callback не сработает, вставьте сюда полный redirect URL или code\n")
-    print(auth_url)
-    print()
+    print("Для реального входа нужен TickTick Developer app с client_id, client_secret и redirect_uri.")
+    print(f"Откройте ссылку и подтвердите доступ:\n{auth_url}\n")
 
     parsed = urlparse(credentials.redirect_uri)
     callback_params: Optional[Dict[str, str]] = None
     if parsed.hostname in {"127.0.0.1", "localhost"} and parsed.port:
-        if open_browser:
+        if open_browser and _can_open_browser():
             webbrowser.open(auth_url)
-        print("Ожидаю callback на localhost...")
-        callback_params = _wait_for_callback(credentials.redirect_uri)
+        elif open_browser:
+            print("Авто-открытие браузера пропущено: похоже, это container/headless среда.")
+        print(f"Жду callback на {credentials.redirect_uri}")
+        callback_params = _wait_for_callback(
+            credentials.redirect_uri,
+            timeout_seconds=callback_timeout_seconds,
+        )
+        if callback_params is None:
+            print("Callback не сработал автоматически.")
 
     if callback_params is None:
-        callback_value = input("Вставьте redirect URL или code: ").strip()
+        callback_value = input("Если callback не сработал, вставьте полный redirect URL или code: ").strip()
         if callback_value.startswith("http://") or callback_value.startswith("https://"):
             parsed_callback = urlparse(callback_value)
             callback_params = {

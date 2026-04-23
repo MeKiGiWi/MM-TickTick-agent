@@ -8,6 +8,18 @@ from app.domain.models import Project, Task
 
 class TickTickProvider(ABC):
     @abstractmethod
+    def create_task(
+        self,
+        *,
+        title: str,
+        project_id: Optional[str] = None,
+        content: Optional[str] = None,
+        due_date: Optional[str] = None,
+        priority: Optional[int] = None,
+    ) -> Task:
+        raise NotImplementedError
+
+    @abstractmethod
     def list_tasks(
         self,
         *,

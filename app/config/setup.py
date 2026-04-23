@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -16,6 +17,59 @@ def _prompt(prompt: str, default: Optional[str] = None) -> str:
     return default or ""
 
 
+def _prompt_choice(prompt: str, choices: set[str], default: str) -> str:
+    while True:
+        value = _prompt(prompt, default).lower()
+        if value in choices:
+            return value
+        print(f"Введите один из вариантов: {', '.join(sorted(choices))}")
+
+
+def _build_openrouter_config() -> OpenRouterConfig:
+    env_api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
+    env_model = os.getenv("OPENROUTER_MODEL", "").strip() or "openrouter/free"
+
+    api_key = env_api_key or _prompt("OpenRouter API key")
+    model = _prompt("OpenRouter model", env_model)
+    return OpenRouterConfig(api_key=api_key, model=model)
+
+
+def _build_ticktick_credentials() -> TickTickCredentials:
+    print()
+    print("TickTick provider: ticktick")
+    print("Для реального TickTick нужен TickTick Developer app с OAuth credentials.")
+    print("Если часть значений уже есть в env, wizard подхватит их и спросит только недостающее.")
+
+    env_defaults = {
+        "client_id": os.getenv("TICKTICK_CLIENT_ID", "").strip(),
+        "client_secret": os.getenv("TICKTICK_CLIENT_SECRET", "").strip(),
+        "redirect_uri": os.getenv("TICKTICK_REDIRECT_URI", "").strip(),
+        "scope": os.getenv("TICKTICK_SCOPE", "").strip() or "tasks:write tasks:read",
+    }
+
+    client_id = env_defaults["client_id"] or _prompt("TickTick client_id")
+    client_secret = env_defaults["client_secret"] or _prompt("TickTick client_secret")
+    redirect_uri = env_defaults["redirect_uri"] or _prompt(
+        "TickTick redirect_uri",
+        "http://localhost:8765/callback",
+    )
+    scope = env_defaults["scope"] or "tasks:write tasks:read"
+
+    return TickTickCredentials(
+        provider="ticktick",
+        client_id=client_id,
+        client_secret=client_secret,
+        redirect_uri=redirect_uri,
+        scope=scope,
+    )
+
+
+def _prompt_ticktick_inbox_project_id(current_value: str = "inbox") -> str:
+    print()
+    print("OAuth завершен. Теперь можно настроить, куда складывать новые задачи.")
+    return _prompt("TickTick inbox_project_id", current_value or "inbox")
+
+
 def ensure_config(root: Path) -> AppConfig:
     store = ConfigStore(root)
     if store.exists():
@@ -28,34 +82,26 @@ def ensure_config(root: Path) -> AppConfig:
             store.save(config)
         return config
 
-    print("Первый запуск. Нужен локальный setup.")
-    api_key = _prompt("Вставьте OpenRouter API key")
-    model = _prompt(
-        "OpenRouter model",
-        "meta-llama/llama-3.3-70b-instruct:free",
-    )
-    provider = _prompt("TickTick provider (mock/ticktick)", "mock")
-    client_id = _prompt("TickTick client_id", "")
-    client_secret = _prompt("TickTick client_secret", "")
-    redirect_uri = _prompt("TickTick redirect_uri", "http://localhost:8765/callback")
-    scope = _prompt("TickTick OAuth scope", "tasks:write tasks:read")
-    inbox_project_id = _prompt("TickTick inbox_project_id", "inbox")
+    print("Первый запуск. Сохраняю локальный config для CLI.")
+    openrouter_config = _build_openrouter_config()
+    provider = _prompt_choice("TickTick provider (mock/ticktick)", {"mock", "ticktick"}, "mock")
 
+    ticktick_config = (
+        TickTickCredentials(provider="mock")
+        if provider == "mock"
+        else _build_ticktick_credentials()
+    )
     config = AppConfig(
-        openrouter=OpenRouterConfig(api_key=api_key, model=model),
-        ticktick=TickTickCredentials(
-            provider="ticktick" if provider == "ticktick" else "mock",
-            client_id=client_id,
-            client_secret=client_secret,
-            redirect_uri=redirect_uri,
-            scope=scope,
-            inbox_project_id=inbox_project_id,
-        ),
+        openrouter=openrouter_config,
+        ticktick=ticktick_config,
     )
     if config.ticktick.provider == "ticktick":
         oauth_result = run_oauth_login(config.ticktick)
         config.ticktick.access_token = oauth_result.access_token
         config.ticktick.auth_state = oauth_result.state
+        config.ticktick.inbox_project_id = _prompt_ticktick_inbox_project_id(
+            config.ticktick.inbox_project_id
+        )
     store.save(config)
     print(f"Конфиг сохранен в {store.path}")
     return config
