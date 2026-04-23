@@ -246,7 +246,7 @@ Reasoning включен через `extra_body={"reasoning": {"enabled": True}}
 4. Результат добавляется как `role=tool`
 5. Выполняется повторный запрос в модель
 
-Все это реализовано в [app/llm/openrouter.py](/Users/daniil/code/mai/Matmod/app/llm/openrouter.py) и [app/tools/registry.py](/Users/daniil/code/mai/Matmod/app/tools/registry.py). Tool loop по-прежнему работает через `tool_calls`, а assistant messages теперь также сохраняют `reasoning_details`, если они пришли от роутера/модели. Если tool возвращает ошибку, в `tool` message уходит структурированный объект с `error`, чтобы модель не подменяла это выдуманным "пусто".
+Все это реализовано в [app/llm/openrouter.py](/Users/daniil/code/mai/Matmod/app/llm/openrouter.py) и [app/tools/registry.py](/Users/daniil/code/mai/Matmod/app/tools/registry.py). Tool loop по-прежнему работает через `tool_calls`, а assistant messages теперь также сохраняют `reasoning_details`, если они пришли от роутера/модели. Если tool возвращает ошибку, в `tool` message уходит структурированный объект с `error`, чтобы модель не подменяла это выдуманным "пусто". Для запросов вроде "сегодня" и "на ближайшую неделю" в system context подставляется текущая локальная дата и timezone runtime, а task payload дополняется локально-нормализованными полями даты.
 
 ### Доступные tools
 

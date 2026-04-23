@@ -14,5 +14,6 @@
     "scope": "tasks:write tasks:read",
     "auth_state": "",
     "inbox_project_id": "inbox"
-  }
+  },
+  "user_timezone": "Europe/Moscow"
 }

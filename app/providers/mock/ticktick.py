@@ -42,6 +42,11 @@ class MockTickTickProvider(TickTickProvider):
         }
         self.counter = 100
 
+    def _attach_project_name(self, task: Task) -> Task:
+        project = self.projects.get(task.project_id)
+        task.project_name = project.name if project else None
+        return task
+
     def create_task(
         self,
         *,
@@ -59,12 +64,13 @@ class MockTickTickProvider(TickTickProvider):
             id=f"task-{self.counter}",
             title=title,
             project_id=target_project_id,
+            project_name=self.projects[target_project_id].name,
             content=content,
             due_date=due_date,
             priority=priority or 0,
         )
         self.tasks[task.id] = task
-        return deepcopy(task)
+        return deepcopy(self._attach_project_name(task))
 
     def list_tasks(
         self,
@@ -81,20 +87,25 @@ class MockTickTickProvider(TickTickProvider):
         if search:
             lowered = search.lower()
             tasks = [task for task in tasks if lowered in task.title.lower()]
-        return [deepcopy(task) for task in tasks]
+        return [deepcopy(self._attach_project_name(task)) for task in tasks]
 
     def get_task_details(self, task_id: str) -> Task:
-        return deepcopy(self.tasks[task_id])
+        return deepcopy(self._attach_project_name(self.tasks[task_id]))
 
     def create_subtasks(self, task_id: str, titles: list[str]) -> list[Task]:
         parent = self.tasks[task_id]
         created: list[Task] = []
         for title in titles:
             self.counter += 1
-            subtask = Task(id=f"task-{self.counter}", title=title, project_id=parent.project_id)
+            subtask = Task(
+                id=f"task-{self.counter}",
+                title=title,
+                project_id=parent.project_id,
+                project_name=self.projects[parent.project_id].name,
+            )
             parent.subtasks.append(subtask)
             self.tasks[subtask.id] = subtask
-            created.append(deepcopy(subtask))
+            created.append(deepcopy(self._attach_project_name(subtask)))
         return created
 
     def update_task(self, task_id: str, fields: dict[str, object]) -> Task:
@@ -102,7 +113,7 @@ class MockTickTickProvider(TickTickProvider):
         for key, value in fields.items():
             if hasattr(task, key):
                 setattr(task, key, value)
-        return deepcopy(task)
+        return deepcopy(self._attach_project_name(task))
 
     def list_projects(self) -> list[Project]:
         return [deepcopy(project) for project in self.projects.values()]
@@ -110,9 +121,9 @@ class MockTickTickProvider(TickTickProvider):
     def move_task(self, task_id: str, project_id: str) -> Task:
         task = self.tasks[task_id]
         task.project_id = project_id
-        return deepcopy(task)
+        return deepcopy(self._attach_project_name(task))
 
     def mark_complete(self, task_id: str) -> Task:
         task = self.tasks[task_id]
         task.status = "completed"
-        return deepcopy(task)
+        return deepcopy(self._attach_project_name(task))

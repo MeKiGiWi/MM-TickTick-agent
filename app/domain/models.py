@@ -18,11 +18,27 @@ class Task(BaseModel):
         default="inbox",
         validation_alias=AliasChoices("project_id", "projectId"),
     )
+    project_name: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("project_name", "projectName"),
+    )
     status: TaskStatus = "normal"
     priority: int = 0
     due_date: Optional[str] = Field(
         default=None,
         validation_alias=AliasChoices("due_date", "dueDate"),
+    )
+    start_date: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("start_date", "startDate"),
+    )
+    is_all_day: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("is_all_day", "isAllDay"),
+    )
+    time_zone: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("time_zone", "timeZone"),
     )
     content: Optional[str] = None
     is_overdue: bool = Field(
@@ -43,8 +59,10 @@ class Task(BaseModel):
 
 
 class Project(BaseModel):
-    id: str
-    name: str
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    id: str = Field(validation_alias=AliasChoices("id", "projectId"))
+    name: str = Field(validation_alias=AliasChoices("name", "projectName"))
     kind: Literal["TASK", "NOTE"] = "TASK"
 
 
@@ -80,3 +98,4 @@ class OpenRouterConfig(BaseModel):
 class AppConfig(BaseModel):
     openrouter: OpenRouterConfig
     ticktick: TickTickCredentials
+    user_timezone: Optional[str] = None

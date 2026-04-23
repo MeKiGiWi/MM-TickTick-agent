@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 from app.domain.models import AppConfig, OpenRouterConfig, TickTickCredentials
 from app.providers.ticktick.oauth import run_oauth_login
 from app.storage.config_store import ConfigStore
+from app.utils.timezone import configured_timezone_name
 
 
 def _prompt(prompt: str, default: Optional[str] = None) -> str:
@@ -64,6 +66,17 @@ def _build_ticktick_credentials() -> TickTickCredentials:
     )
 
 
+def _default_user_timezone() -> Optional[str]:
+    configured = configured_timezone_name()
+    if configured:
+        return configured
+    current = datetime.now().astimezone().tzinfo
+    key = getattr(current, "key", None)
+    if isinstance(key, str) and key:
+        return key
+    return None
+
+
 def _prompt_ticktick_inbox_project_id(current_value: str = "inbox") -> str:
     print()
     print("OAuth завершен. Теперь можно настроить, куда складывать новые задачи.")
@@ -94,6 +107,7 @@ def ensure_config(root: Path) -> AppConfig:
     config = AppConfig(
         openrouter=openrouter_config,
         ticktick=ticktick_config,
+        user_timezone=_default_user_timezone(),
     )
     if config.ticktick.provider == "ticktick":
         oauth_result = run_oauth_login(config.ticktick)

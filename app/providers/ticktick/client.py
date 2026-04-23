@@ -52,11 +52,37 @@ class TickTickApiProvider(TickTickProvider):
         self._task_project_cache[task.id] = task.project_id
         return task
 
+    def _project_name_for(self, project_id: str) -> Optional[str]:
+        project = self._projects_cache.get(project_id)
+        if project is not None:
+            return project.name
+        try:
+            project = self._get_project_by_id(project_id)
+        except Exception:
+            return None
+        return project.name
+
+    def _attach_project_name(self, task: Task) -> Task:
+        task.project_name = self._project_name_for(task.project_id)
+        return task
+
     def _normalize_task(self, payload: dict[str, Any]) -> Task:
-        return self._remember_task(Task.model_validate(payload))
+        task = Task.model_validate(payload)
+        return self._remember_task(self._attach_project_name(task))
+
+    @staticmethod
+    def _parse_project(item: Any) -> Optional[Project]:
+        if not isinstance(item, dict):
+            return None
+        try:
+            return Project.model_validate(item)
+        except Exception:
+            return None
 
     def _load_projects(self) -> list[Project]:
-        projects = [Project.model_validate(item) for item in self._request("GET", "/project")]
+        payload = self._request("GET", "/project")
+        items = payload if isinstance(payload, list) else []
+        projects = [project for item in items if (project := self._parse_project(item)) is not None]
         self._projects_cache = {project.id: project for project in projects}
         return projects
 
@@ -80,10 +106,22 @@ class TickTickApiProvider(TickTickProvider):
                 pass
 
         projects = self._load_projects()
+        if configured:
+            lowered = configured.lower()
+            for project in projects:
+                if project.id.lower() == lowered or project.name.lower() == lowered:
+                    return project.id
+        for inbox_name in ("inbox", "входящие"):
+            for project in projects:
+                if project.name.lower() == inbox_name:
+                    return project.id
+        for project in projects:
+            if project.kind == "TASK":
+                return project.id
         if projects:
             return projects[0].id
         raise ValueError(
-            "Не удалось определить project_id для новой задачи: inbox/default project не настроен или недоступен."
+            "Не удалось определить project_id для новой задачи: не найден доступный inbox/default project."
         )
 
     def _resolve_target_project_id(self, project_id: Optional[str]) -> str:
@@ -133,10 +171,24 @@ class TickTickApiProvider(TickTickProvider):
         for key, value in fields.items():
             if key == "project_id":
                 normalized["projectId"] = value
+            elif key == "projectId":
+                normalized["projectId"] = value
             elif key == "due_date":
+                normalized["dueDate"] = value
+            elif key == "dueDate":
                 normalized["dueDate"] = value
             elif key == "start_date":
                 normalized["startDate"] = value
+            elif key == "startDate":
+                normalized["startDate"] = value
+            elif key == "time_zone":
+                normalized["timeZone"] = value
+            elif key == "timeZone":
+                normalized["timeZone"] = value
+            elif key == "is_all_day":
+                normalized["isAllDay"] = value
+            elif key == "isAllDay":
+                normalized["isAllDay"] = value
             elif key == "status":
                 if value in {"normal", "open"}:
                     normalized["status"] = 0
@@ -231,8 +283,10 @@ class TickTickApiProvider(TickTickProvider):
         configured = (self.credentials.inbox_project_id or "").strip()
         if configured and configured not in {project.id for project in projects}:
             try:
-                projects.append(self._get_project_by_id(configured))
-            except httpx.HTTPStatusError:
+                configured_project = self._get_project_by_id(configured)
+                if configured_project.id not in {project.id for project in projects}:
+                    projects.append(configured_project)
+            except Exception:
                 projects.append(Project(id=configured, name="Inbox (configured)", kind="TASK"))
         return projects
 
