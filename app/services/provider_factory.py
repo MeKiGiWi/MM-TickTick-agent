@@ -8,10 +8,15 @@ from app.providers.ticktick.base import TickTickProvider
 from app.providers.ticktick.client import TickTickApiProvider
 
 
-def build_ticktick_provider(credentials: TickTickCredentials, root: Path) -> TickTickProvider:
+def build_ticktick_provider(
+    credentials: TickTickCredentials,
+    root: Path,
+    user_timezone: str | None = None,
+) -> TickTickProvider:
     if credentials.provider == "ticktick":
         return TickTickApiProvider(
             credentials=credentials,
             guide_path=root / "ticktick_open_api_codex_guide.md",
+            user_timezone=user_timezone,
         )
     return MockTickTickProvider()

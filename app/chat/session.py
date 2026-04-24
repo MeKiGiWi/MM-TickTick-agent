@@ -20,7 +20,11 @@ class ChatSession:
     def __init__(self, root: Optional[Path] = None) -> None:
         self.root = root or Path(__file__).resolve().parents[2]
         self.config = ensure_config(self.root)
-        self.provider = build_ticktick_provider(self.config.ticktick, self.root)
+        self.provider = build_ticktick_provider(
+            self.config.ticktick,
+            self.root,
+            user_timezone=self.config.user_timezone,
+        )
         self.registry = ToolRegistry(self.provider, user_timezone=self.config.user_timezone)
         self.llm = OpenRouterToolLoop(OpenRouterClient(self.config.openrouter), self.registry)
         self.clarify_agent = ClarifyAgent()
@@ -119,6 +123,9 @@ class ChatSession:
                 answer = f"Не удалось обработать ход: {exc}"
                 updated_messages = self.messages + [{"role": "assistant", "content": answer}]
             self.messages = updated_messages
+            answer = answer.strip()
+            if not answer:
+                answer = "Не получил текстовый ответ от модели."
             print()
             print(f"agent> {answer}")
 

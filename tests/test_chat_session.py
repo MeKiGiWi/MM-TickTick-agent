@@ -85,3 +85,24 @@ def test_chat_session_prints_blank_line_before_agent_answer(monkeypatch, capsys)
 
     output = capsys.readouterr().out
     assert "\n\nagent> Ответ пользователю\n" in output
+
+
+def test_chat_session_strips_answer_and_prints_fallback_for_empty(monkeypatch, capsys) -> None:
+    session = ChatSession.__new__(ChatSession)
+    session.provider = MockTickTickProvider()
+    session.registry = ToolRegistry(session.provider, user_timezone="Europe/Moscow")
+    session.llm = SimpleNamespace(
+        run_turn=lambda messages: ("\n\n", messages + [{"role": "assistant", "content": "\n\n"}])
+    )
+    session.clarify_agent = SimpleNamespace(assess_tasks=lambda tasks: [])
+    session.config = SimpleNamespace(user_timezone="Europe/Moscow")
+    session.messages = [{"role": "system", "content": "base"}]
+    session._maybe_add_clarify_context = lambda user_input: None
+
+    answers = iter(["привет", "exit"])
+    monkeypatch.setattr("builtins.input", lambda _: next(answers))
+
+    session.run()
+
+    output = capsys.readouterr().out
+    assert "agent> Не получил текстовый ответ от модели." in output

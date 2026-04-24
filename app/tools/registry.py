@@ -256,17 +256,23 @@ class ToolRegistry:
                         "project_id": {"type": "string"},
                         "content": {"type": "string"},
                         "due_date": {"type": "string"},
+                        "start_date": {"type": "string"},
+                        "is_all_day": {"type": "boolean"},
+                        "time_zone": {"type": "string"},
                         "priority": {"type": "integer"},
                     },
                     "required": ["title"],
                 },
                 handler=self._wrap_handler(
                     "create_task",
-                    lambda title, project_id=None, content=None, due_date=None, priority=None, **_: self.provider.create_task(
+                    lambda title, project_id=None, content=None, due_date=None, start_date=None, is_all_day=None, time_zone=None, priority=None, **_: self.provider.create_task(
                         title=title,
                         project_id=project_id,
                         content=content,
                         due_date=due_date,
+                        start_date=start_date,
+                        is_all_day=is_all_day,
+                        time_zone=time_zone,
                         priority=priority,
                     ),
                 ),
@@ -352,6 +358,31 @@ class ToolRegistry:
         )
         self._register(
             ToolSpec(
+                name="update_task_by_search",
+                description=(
+                    "Find an open task by title/content search and update it. "
+                    "Use when user refers to a task by name instead of task_id."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "search": {"type": "string"},
+                        "fields": {"type": "object"},
+                        "project_id": {"type": "string"},
+                        "prefer_due_date": {"type": "string"},
+                        "prefer_today": {"type": "boolean"},
+                        "exact_title": {"type": "boolean", "default": False},
+                    },
+                    "required": ["search", "fields"],
+                },
+                handler=self._wrap_handler(
+                    "update_task_by_search",
+                    self._update_task_by_search,
+                ),
+            )
+        )
+        self._register(
+            ToolSpec(
                 name="list_projects",
                 description=(
                     "List available TickTick projects. Include the configured inbox/default project context when possible."
@@ -431,6 +462,77 @@ class ToolRegistry:
                 ),
             )
         )
+
+    def _candidate_sort_key(self, item: dict[str, Any]) -> tuple[Any, Any, Any]:
+        return (
+            item.get("due_date_display_date") or "9999-12-31",
+            item.get("due_date_display_time") is None,
+            item.get("due_date_display_time") or "",
+        )
+
+    def _candidate_summary(self, item: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "title": item.get("title"),
+            "project_name": item.get("project_name"),
+            "due_date_human": item.get("due_date_human"),
+        }
+
+    def _update_task_by_search(
+        self,
+        search: str,
+        fields: dict[str, object],
+        project_id: Optional[str] = None,
+        prefer_due_date: Optional[str] = None,
+        prefer_today: bool = False,
+        exact_title: bool = False,
+        **_: Any,
+    ) -> Any:
+        tasks = self.provider.list_tasks(status="normal", search=search, project_id=project_id)
+        payloads = [self._augment_task_payload(self._dump_item(task)) for task in tasks]
+        normalized_search = search.strip().lower()
+        if exact_title:
+            exact_matches = [
+                item
+                for item in payloads
+                if str(item.get("title") or "").strip().lower() == normalized_search
+            ]
+            if exact_matches:
+                payloads = exact_matches
+        if not payloads:
+            return {
+                "not_found": True,
+                "message": f"Не нашёл открытую задачу по запросу «{search}».",
+                "search": search,
+            }
+        if len(payloads) == 1:
+            return self.provider.update_task(str(payloads[0]["id"]), fields)
+
+        today = self._now().date().isoformat()
+        candidates = payloads
+        if prefer_today:
+            today_matches = [
+                item for item in candidates if item.get("due_date_display_date") == today
+            ]
+            if len(today_matches) == 1:
+                return self.provider.update_task(str(today_matches[0]["id"]), fields)
+            if today_matches:
+                candidates = today_matches
+        if prefer_due_date:
+            preferred_matches = [
+                item for item in candidates if item.get("due_date_display_date") == prefer_due_date
+            ]
+            if len(preferred_matches) == 1:
+                return self.provider.update_task(str(preferred_matches[0]["id"]), fields)
+            if preferred_matches:
+                candidates = preferred_matches
+        upcoming = sorted(candidates, key=self._candidate_sort_key)
+        if upcoming and len(upcoming) >= 2 and self._candidate_sort_key(upcoming[0]) != self._candidate_sort_key(upcoming[1]):
+            return self.provider.update_task(str(upcoming[0]["id"]), fields)
+        return {
+            "needs_clarification": True,
+            "message": f"Нашёл несколько подходящих задач по запросу «{search}». Уточни, какую именно обновить.",
+            "candidates": [self._candidate_summary(item) for item in upcoming[:5]],
+        }
 
     def list_openrouter_tools(self) -> list[dict[str, Any]]:
         return [tool.to_openrouter_tool() for tool in self._tools.values()]

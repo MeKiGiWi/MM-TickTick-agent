@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+from datetime import date, datetime, time
 from pathlib import Path
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
 import httpx
 
 from app.domain.models import Project, Task, TickTickCredentials
 from app.providers.ticktick.base import TickTickProvider
+from app.utils.timezone import configured_timezone_name, resolve_timezone, timezone_label
 
 
 class TickTickApiProvider(TickTickProvider):
@@ -14,9 +17,11 @@ class TickTickApiProvider(TickTickProvider):
         self,
         credentials: TickTickCredentials,
         guide_path: Optional[Path] = None,
+        user_timezone: Optional[str] = None,
     ) -> None:
         self.credentials = credentials
         self.guide_path = guide_path
+        self.user_timezone = user_timezone
         self.base_url = "https://api.ticktick.com/open/v1"
         self.client = httpx.Client(
             base_url=self.base_url,
@@ -32,10 +37,58 @@ class TickTickApiProvider(TickTickProvider):
 
     def _request(self, method: str, path: str, **kwargs: Any) -> Any:
         response = self.client.request(method, path, **kwargs)
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            body = response.text.strip()
+            body_suffix = f": {body}" if body else ""
+            raise ValueError(
+                f"TickTick API error {response.status_code} {method} {path}{body_suffix}"
+            ) from exc
         if not response.content:
             return {}
         return response.json()
+
+    def _default_timezone_name(self) -> str:
+        configured = configured_timezone_name(self.user_timezone)
+        if configured:
+            return configured
+        timezone = resolve_timezone(self.user_timezone)
+        return timezone_label(timezone)
+
+    @staticmethod
+    def _format_ticktick_datetime(value: datetime) -> str:
+        return value.astimezone(ZoneInfo("UTC")).strftime("%Y-%m-%dT%H:%M:%S%z")
+
+    @classmethod
+    def _local_date_to_ticktick_all_day_datetime(cls, local_date: date, timezone_name: str) -> str:
+        timezone = ZoneInfo(timezone_name)
+        local_dt = datetime.combine(local_date, time.min, tzinfo=timezone)
+        return cls._format_ticktick_datetime(local_dt)
+
+    @classmethod
+    def _normalize_ticktick_datetime_input(
+        cls,
+        value: str,
+        timezone_name: str,
+        is_all_day: bool,
+    ) -> str:
+        normalized = value.strip()
+        for fmt in ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S.%f%z"):
+            try:
+                parsed = datetime.strptime(normalized, fmt)
+                return parsed.strftime("%Y-%m-%dT%H:%M:%S%z")
+            except ValueError:
+                continue
+        try:
+            local_date = datetime.strptime(normalized, "%Y-%m-%d").date()
+        except ValueError:
+            return normalized
+        timezone = ZoneInfo(timezone_name)
+        if is_all_day:
+            return cls._local_date_to_ticktick_all_day_datetime(local_date, timezone_name)
+        local_dt = datetime.combine(local_date, time.min, tzinfo=timezone)
+        return cls._format_ticktick_datetime(local_dt)
 
     @staticmethod
     def _normalize_status_filter(status: Optional[str]) -> Optional[str]:
@@ -189,6 +242,10 @@ class TickTickApiProvider(TickTickProvider):
                 normalized["isAllDay"] = value
             elif key == "isAllDay":
                 normalized["isAllDay"] = value
+            elif key == "title":
+                normalized["title"] = value
+            elif key == "content":
+                normalized["content"] = value
             elif key == "status":
                 if value in {"normal", "open"}:
                     normalized["status"] = 0
@@ -200,6 +257,40 @@ class TickTickApiProvider(TickTickProvider):
                 normalized[key] = value
         return normalized
 
+    def _normalize_task_datetime_fields(self, payload: dict[str, Any]) -> dict[str, Any]:
+        timezone_name = str(payload.get("timeZone") or self._default_timezone_name())
+        is_all_day = bool(payload.get("isAllDay"))
+        for field_name in ("dueDate", "startDate"):
+            value = payload.get(field_name)
+            if isinstance(value, str) and value.strip():
+                payload[field_name] = self._normalize_ticktick_datetime_input(
+                    value,
+                    timezone_name=timezone_name,
+                    is_all_day=is_all_day,
+                )
+        if is_all_day and "timeZone" not in payload:
+            payload["timeZone"] = timezone_name
+        return payload
+
+    def _task_to_update_payload(self, task: Task) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "id": task.id,
+            "projectId": task.project_id,
+            "title": task.title,
+            "priority": task.priority,
+        }
+        if task.content is not None:
+            payload["content"] = task.content
+        if task.due_date:
+            payload["dueDate"] = task.due_date
+        if task.start_date:
+            payload["startDate"] = task.start_date
+        if task.time_zone:
+            payload["timeZone"] = task.time_zone
+        if task.is_all_day:
+            payload["isAllDay"] = True
+        return payload
+
     def create_task(
         self,
         *,
@@ -207,6 +298,9 @@ class TickTickApiProvider(TickTickProvider):
         project_id: Optional[str] = None,
         content: Optional[str] = None,
         due_date: Optional[str] = None,
+        start_date: Optional[str] = None,
+        is_all_day: Optional[bool] = None,
+        time_zone: Optional[str] = None,
         priority: Optional[int] = None,
     ) -> Task:
         payload: dict[str, Any] = {
@@ -217,8 +311,15 @@ class TickTickApiProvider(TickTickProvider):
             payload["content"] = content
         if due_date:
             payload["dueDate"] = due_date
+        if start_date:
+            payload["startDate"] = start_date
+        if is_all_day is not None:
+            payload["isAllDay"] = is_all_day
+        if time_zone:
+            payload["timeZone"] = time_zone
         if priority is not None:
             payload["priority"] = priority
+        payload = self._normalize_task_datetime_fields(payload)
         return self._normalize_task(self._request("POST", "/task", json=payload))
 
     def list_tasks(
@@ -271,11 +372,21 @@ class TickTickApiProvider(TickTickProvider):
 
     def update_task(self, task_id: str, fields: dict[str, object]) -> Task:
         current = self.get_task_details(task_id)
-        payload = {
-            "id": current.id,
-            "projectId": current.project_id,
-            **self._normalize_update_fields(fields),
-        }
+        normalized_fields = self._normalize_update_fields(fields)
+        merged_task = current.model_copy(
+            update={
+                "project_id": normalized_fields.get("projectId", current.project_id),
+                "title": normalized_fields.get("title", current.title),
+                "content": normalized_fields.get("content", current.content),
+                "due_date": normalized_fields.get("dueDate", current.due_date),
+                "start_date": normalized_fields.get("startDate", current.start_date),
+                "is_all_day": normalized_fields.get("isAllDay", current.is_all_day),
+                "time_zone": normalized_fields.get("timeZone", current.time_zone),
+                "priority": normalized_fields.get("priority", current.priority),
+            }
+        )
+        payload = self._task_to_update_payload(merged_task)
+        payload = self._normalize_task_datetime_fields(payload)
         return self._normalize_task(self._request("POST", f"/task/{task_id}", json=payload))
 
     def list_projects(self) -> list[Project]:

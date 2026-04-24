@@ -113,6 +113,16 @@ def test_list_projects_tool_schema_does_not_require_id_or_name() -> None:
     assert "name" not in list_projects["parameters"]["properties"]
 
 
+def test_create_task_tool_schema_exposes_all_day_fields() -> None:
+    registry = ToolRegistry(MockTickTickProvider(), user_timezone="Europe/Moscow")
+    create_task = next(
+        tool["function"] for tool in registry.list_openrouter_tools() if tool["function"]["name"] == "create_task"
+    )
+    assert "start_date" in create_task["parameters"]["properties"]
+    assert "is_all_day" in create_task["parameters"]["properties"]
+    assert "time_zone" in create_task["parameters"]["properties"]
+
+
 def test_upcoming_tasks_excludes_overdue_and_undated_by_default() -> None:
     provider = MockTickTickProvider()
     provider.tasks = {
@@ -269,6 +279,80 @@ def test_due_date_human_marks_overdue_tasks() -> None:
     assert "просрочено" in payload["due_date_human"]
 
 
+def test_update_task_by_search_updates_unique_exact_title() -> None:
+    provider = MockTickTickProvider()
+    provider.tasks = {
+        "task-1": provider.tasks["task-1"].model_copy(
+            update={
+                "title": "hello world",
+                "project_id": "inbox",
+                "project_name": "Inbox",
+                "due_date": "2026-04-24T09:00:00+0000",
+                "time_zone": "Europe/Moscow",
+                "is_all_day": True,
+            }
+        )
+    }
+    registry = ToolRegistry(
+        provider,
+        user_timezone="Europe/Moscow",
+        now_provider=lambda: datetime(2026, 4, 24, 12, 0, tzinfo=ZoneInfo("Europe/Moscow")),
+    )
+    payload = json.loads(
+        registry.execute_tool(
+            "update_task_by_search",
+            json.dumps(
+                {
+                    "search": "hello world",
+                    "fields": {"title": "hello world!"},
+                    "exact_title": True,
+                    "prefer_today": True,
+                },
+                ensure_ascii=False,
+            ),
+        )
+    )
+    assert payload["title"] == "hello world!"
+
+
+def test_update_task_by_search_returns_not_found_without_asking_for_id() -> None:
+    registry = ToolRegistry(MockTickTickProvider(), user_timezone="Europe/Moscow")
+    payload = json.loads(
+        registry.execute_tool(
+            "update_task_by_search",
+            json.dumps({"search": "missing", "fields": {"title": "x"}}, ensure_ascii=False),
+        )
+    )
+    assert payload["not_found"] is True
+    assert "task_id" not in payload["message"]
+
+
+def test_update_task_by_search_returns_clarification_without_ids() -> None:
+    provider = MockTickTickProvider()
+    provider.tasks = {
+        "task-1": provider.tasks["task-1"].model_copy(
+            update={"title": "hello world", "project_name": "Inbox", "due_date": "2026-04-25T09:00:00+0000", "time_zone": "Europe/Moscow"}
+        ),
+        "task-2": provider.tasks["task-2"].model_copy(
+            update={"title": "hello world", "project_name": "Work", "due_date": "2026-04-25T09:00:00+0000", "time_zone": "Europe/Moscow"}
+        ),
+    }
+    registry = ToolRegistry(
+        provider,
+        user_timezone="Europe/Moscow",
+        now_provider=lambda: datetime(2026, 4, 24, 12, 0, tzinfo=ZoneInfo("Europe/Moscow")),
+    )
+    payload = json.loads(
+        registry.execute_tool(
+            "update_task_by_search",
+            json.dumps({"search": "hello world", "fields": {"title": "hello world!"}}, ensure_ascii=False),
+        )
+    )
+    assert payload["needs_clarification"] is True
+    assert payload["candidates"]
+    assert all("id" not in item for item in payload["candidates"])
+
+
 def test_upcoming_tasks_snapshot_like_output_contains_expected_fields() -> None:
     provider = MockTickTickProvider()
     provider.tasks = {
@@ -311,3 +395,88 @@ def test_upcoming_tasks_snapshot_like_output_contains_expected_fields() -> None:
         if item.get("due_date"):
             assert "due_date_display_date" in item
             assert "due_date_human" in item
+
+
+def test_scenario_create_task_today_uses_all_day_fields_without_project_prompt() -> None:
+    registry = ToolRegistry(MockTickTickProvider(), user_timezone="Europe/Moscow")
+    payload = json.loads(
+        registry.execute_tool(
+            "create_task",
+            json.dumps(
+                {
+                    "title": "hello world",
+                    "due_date": "2026-04-24",
+                    "is_all_day": True,
+                    "time_zone": "Europe/Moscow",
+                },
+                ensure_ascii=False,
+            ),
+        )
+    )
+    assert payload["title"] == "hello world"
+    assert payload["project_name"] == "Inbox"
+    assert payload["is_all_day"] is True
+    assert payload["time_zone"] == "Europe/Moscow"
+
+
+def test_scenario_update_task_by_name_adds_exclamation_mark() -> None:
+    provider = MockTickTickProvider()
+    provider.tasks["task-1"] = provider.tasks["task-1"].model_copy(
+        update={
+            "title": "hello world",
+            "project_id": "inbox",
+            "project_name": "Inbox",
+            "due_date": "2026-04-24T09:00:00+0000",
+            "time_zone": "Europe/Moscow",
+            "is_all_day": True,
+        }
+    )
+    registry = ToolRegistry(
+        provider,
+        user_timezone="Europe/Moscow",
+        now_provider=lambda: datetime(2026, 4, 24, 12, 0, tzinfo=ZoneInfo("Europe/Moscow")),
+    )
+    payload = json.loads(
+        registry.execute_tool(
+            "update_task_by_search",
+            json.dumps(
+                {
+                    "search": "hello world",
+                    "fields": {"title": "hello world!"},
+                    "exact_title": True,
+                    "prefer_today": True,
+                },
+                ensure_ascii=False,
+            ),
+        )
+    )
+    assert payload["title"] == "hello world!"
+
+
+def test_scenario_two_matching_tasks_returns_short_clarification_payload_without_ids() -> None:
+    provider = MockTickTickProvider()
+    provider.tasks = {
+        "task-1": provider.tasks["task-1"].model_copy(
+            update={"title": "hello world", "project_name": "Inbox", "due_date": "2026-04-25T09:00:00+0000", "time_zone": "Europe/Moscow"}
+        ),
+        "task-2": provider.tasks["task-2"].model_copy(
+            update={"title": "hello world", "project_name": "Work", "due_date": "2026-04-25T09:00:00+0000", "time_zone": "Europe/Moscow"}
+        ),
+    }
+    registry = ToolRegistry(
+        provider,
+        user_timezone="Europe/Moscow",
+        now_provider=lambda: datetime(2026, 4, 24, 12, 0, tzinfo=ZoneInfo("Europe/Moscow")),
+    )
+    payload = json.loads(
+        registry.execute_tool(
+            "update_task_by_search",
+            json.dumps(
+                {"search": "hello world", "fields": {"title": "hello world!"}},
+                ensure_ascii=False,
+            ),
+        )
+    )
+    assert payload["needs_clarification"] is True
+    assert len(payload["candidates"]) == 2
+    assert all("id" not in candidate for candidate in payload["candidates"])

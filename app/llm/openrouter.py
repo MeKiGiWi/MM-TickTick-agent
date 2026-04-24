@@ -86,7 +86,11 @@ class OpenRouterToolLoop:
 
             tool_calls = result.message.get("tool_calls") or []
             if not tool_calls:
-                return assistant_message["content"], local_messages
+                content = str(assistant_message["content"]).strip()
+                if content:
+                    assistant_message["content"] = content
+                    return content, local_messages
+                continue
 
             for tool_call in tool_calls:
                 function = tool_call["function"]
@@ -114,4 +118,4 @@ class OpenRouterToolLoop:
                     }
                 )
 
-        raise RuntimeError("Tool loop exceeded maximum iterations")
+        raise RuntimeError("Не получил текстовый ответ от модели после tool calls.")

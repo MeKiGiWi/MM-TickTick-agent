@@ -15,6 +15,9 @@ class TickTickProvider(ABC):
         project_id: Optional[str] = None,
         content: Optional[str] = None,
         due_date: Optional[str] = None,
+        start_date: Optional[str] = None,
+        is_all_day: Optional[bool] = None,
+        time_zone: Optional[str] = None,
         priority: Optional[int] = None,
     ) -> Task:
         raise NotImplementedError

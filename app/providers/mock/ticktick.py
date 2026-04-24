@@ -54,6 +54,9 @@ class MockTickTickProvider(TickTickProvider):
         project_id: Optional[str] = None,
         content: Optional[str] = None,
         due_date: Optional[str] = None,
+        start_date: Optional[str] = None,
+        is_all_day: Optional[bool] = None,
+        time_zone: Optional[str] = None,
         priority: Optional[int] = None,
     ) -> Task:
         target_project_id = project_id or "inbox"
@@ -67,6 +70,9 @@ class MockTickTickProvider(TickTickProvider):
             project_name=self.projects[target_project_id].name,
             content=content,
             due_date=due_date,
+            start_date=start_date,
+            is_all_day=bool(is_all_day),
+            time_zone=time_zone,
             priority=priority or 0,
         )
         self.tasks[task.id] = task

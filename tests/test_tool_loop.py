@@ -110,3 +110,55 @@ def test_tool_loop_preserves_structured_tool_errors() -> None:
     assert client.tool_messages
     assert '"error"' in client.tool_messages[0]["content"]
     assert '"message"' in client.tool_messages[0]["content"]
+
+
+class WhitespaceContentClient:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def create_chat_completion(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+    ) -> ChatCompletionResult:
+        self.calls += 1
+        if self.calls == 1:
+            return ChatCompletionResult(
+                message={"role": "assistant", "content": "\n\nГотово"},
+                raw_response={"model": "openrouter/auto-picked"},
+            )
+        raise AssertionError("unexpected extra call")
+
+
+def test_tool_loop_strips_leading_newlines_from_answer() -> None:
+    loop = OpenRouterToolLoop(WhitespaceContentClient(), ToolRegistry(MockTickTickProvider()))
+    answer, _messages = loop.run_turn([{"role": "user", "content": "ok"}])
+    assert answer == "Готово"
+
+
+class EmptyContentClient:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def create_chat_completion(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+    ) -> ChatCompletionResult:
+        self.calls += 1
+        return ChatCompletionResult(
+            message={"role": "assistant", "content": "   "},
+            raw_response={"model": "openrouter/auto-picked"},
+        )
+
+
+def test_tool_loop_raises_helpful_error_for_empty_answer() -> None:
+    loop = OpenRouterToolLoop(EmptyContentClient(), ToolRegistry(MockTickTickProvider()))
+    try:
+        loop.run_turn([{"role": "user", "content": "ok"}])
+    except RuntimeError as exc:
+        assert "Не получил текстовый ответ от модели" in str(exc)
+    else:
+        raise AssertionError("Expected RuntimeError")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -16,7 +17,7 @@ def build_provider(**credentials_overrides: Any) -> TickTickApiProvider:
         **credentials_overrides,
     }
     credentials = TickTickCredentials(**payload)
-    return TickTickApiProvider(credentials)
+    return TickTickApiProvider(credentials, user_timezone="Europe/Moscow")
 
 
 def test_task_model_accepts_real_ticktick_payload() -> None:
@@ -92,6 +93,42 @@ def test_create_task_uses_documented_endpoint_and_default_inbox(monkeypatch) -> 
             "projectId": "inbox-123",
         },
     }
+
+
+def test_create_task_normalizes_all_day_local_date(monkeypatch) -> None:
+    provider = build_provider()
+    monkeypatch.setattr(
+        provider,
+        "_get_project_by_id",
+        lambda project_id: Project(id=project_id, name="Inbox"),
+    )
+    recorded: dict[str, Any] = {}
+
+    def fake_request(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        recorded["json"] = kwargs["json"]
+        return {
+            "id": "task-1",
+            "title": kwargs["json"]["title"],
+            "projectId": kwargs["json"]["projectId"],
+            "status": 0,
+            "dueDate": kwargs["json"]["dueDate"],
+            "timeZone": kwargs["json"]["timeZone"],
+            "isAllDay": kwargs["json"]["isAllDay"],
+        }
+
+    monkeypatch.setattr(provider, "_request", fake_request)
+    task = provider.create_task(
+        title="hello world",
+        due_date="2026-04-24",
+        is_all_day=True,
+        time_zone="Europe/Moscow",
+    )
+    assert task.due_date == "2026-04-23T21:00:00+0000"
+    assert task.time_zone == "Europe/Moscow"
+    assert task.is_all_day is True
+    assert recorded["json"]["dueDate"] == "2026-04-23T21:00:00+0000"
+    assert recorded["json"]["timeZone"] == "Europe/Moscow"
+    assert recorded["json"]["isAllDay"] is True
 
 
 def test_list_tasks_uses_filter_endpoint_for_all_open_tasks(monkeypatch) -> None:
@@ -285,3 +322,97 @@ def test_resolve_default_project_id_falls_back_from_literal_inbox(monkeypatch) -
         ],
     )
     assert provider._resolve_default_project_id() == "p1"
+
+
+def test_create_task_uses_real_project_id_when_configured_inbox_is_literal(monkeypatch) -> None:
+    provider = build_provider(inbox_project_id="inbox")
+    recorded: dict[str, Any] = {}
+
+    def fake_get_project(project_id: str) -> Project:
+        request = httpx.Request("GET", f"https://api.ticktick.com/open/v1/project/{project_id}")
+        response = httpx.Response(404, request=request)
+        raise httpx.HTTPStatusError("missing", request=request, response=response)
+
+    def fake_request(method: str, path: str, **kwargs: Any) -> Any:
+        if path == "/project":
+            return [
+                {"id": "real-inbox", "name": "Inbox", "kind": "TASK"},
+                {"id": "work", "name": "Work", "kind": "TASK"},
+            ]
+        if path == "/task":
+            recorded["json"] = kwargs["json"]
+            return {
+                "id": "task-1",
+                "title": kwargs["json"]["title"],
+                "projectId": kwargs["json"]["projectId"],
+                "status": 0,
+            }
+        raise AssertionError(f"Unexpected request: {method} {path}")
+
+    monkeypatch.setattr(provider, "_get_project_by_id", fake_get_project)
+    monkeypatch.setattr(provider, "_request", fake_request)
+    task = provider.create_task(title="hello world")
+    assert task.project_id == "real-inbox"
+    assert recorded["json"]["projectId"] == "real-inbox"
+
+
+def test_request_error_keeps_status_endpoint_and_body(monkeypatch) -> None:
+    provider = build_provider()
+
+    def fake_client_request(method: str, path: str, **kwargs: Any) -> httpx.Response:
+        request = httpx.Request(method, f"https://api.ticktick.com/open/v1{path}")
+        return httpx.Response(400, request=request, text='{"error":"bad request"}')
+
+    monkeypatch.setattr(provider.client, "request", fake_client_request)
+    try:
+        provider._request("POST", "/task", json={"title": "x"})
+    except ValueError as exc:
+        message = str(exc)
+    else:
+        raise AssertionError("Expected ValueError")
+    assert "TickTick API error 400 POST /task" in message
+    assert '{"error":"bad request"}' in message
+
+
+def test_update_task_sends_safe_full_payload(monkeypatch) -> None:
+    provider = build_provider()
+    current = Task(
+        id="task-1",
+        title="hello world",
+        project_id="project-1",
+        project_name="Inbox",
+        content="body",
+        due_date="2026-04-24T10:30:00+0000",
+        start_date="2026-04-24T09:30:00+0000",
+        is_all_day=True,
+        time_zone="Europe/Moscow",
+        priority=3,
+    )
+    monkeypatch.setattr(provider, "get_task_details", lambda task_id: current)
+    recorded: dict[str, Any] = {}
+
+    def fake_request(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        recorded["json"] = kwargs["json"]
+        return {
+            "id": "task-1",
+            "title": kwargs["json"]["title"],
+            "projectId": kwargs["json"]["projectId"],
+            "status": 0,
+            "dueDate": kwargs["json"]["dueDate"],
+            "startDate": kwargs["json"]["startDate"],
+            "isAllDay": kwargs["json"]["isAllDay"],
+            "timeZone": kwargs["json"]["timeZone"],
+            "priority": kwargs["json"]["priority"],
+            "content": kwargs["json"]["content"],
+        }
+
+    monkeypatch.setattr(provider, "_request", fake_request)
+    task = provider.update_task("task-1", {"title": "hello world!"})
+    assert task.title == "hello world!"
+    assert recorded["json"]["id"] == "task-1"
+    assert recorded["json"]["projectId"] == "project-1"
+    assert recorded["json"]["title"] == "hello world!"
+    assert recorded["json"]["dueDate"] == "2026-04-24T10:30:00+0000"
+    assert recorded["json"]["startDate"] == "2026-04-24T09:30:00+0000"
+    assert recorded["json"]["isAllDay"] is True
+    assert recorded["json"]["timeZone"] == "Europe/Moscow"
