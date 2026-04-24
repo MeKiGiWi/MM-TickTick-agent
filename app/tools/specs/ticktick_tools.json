@@ -197,8 +197,8 @@
           },
           "status": {
             "type": "string",
-            "description": "Optional task status value.",
-            "enum": ["normal", "open", "completed", "done"]
+            "description": "Optional completion status. update_task supports only completed/done; use mark_complete semantics for completion.",
+            "enum": ["completed", "done"]
           },
           "project_id": {
             "type": "string",
@@ -250,8 +250,8 @@
           },
           "status": {
             "type": "string",
-            "description": "Optional task status value.",
-            "enum": ["normal", "open", "completed", "done"]
+            "description": "Optional completion status. update_task_by_search supports only completed/done; use it to complete the matched task.",
+            "enum": ["completed", "done"]
           },
           "project_id": {
             "type": "string",

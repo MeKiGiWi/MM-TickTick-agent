@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import json
 from dataclasses import dataclass
 from typing import Any, List, Tuple
@@ -7,7 +5,7 @@ from typing import Any, List, Tuple
 from openai import APIConnectionError, APIStatusError, APITimeoutError, OpenAI, RateLimitError
 
 from app.domain.models import OpenRouterConfig
-from app.tools.registry import ToolRegistry
+from app.llm.tools import ToolExecutor
 
 
 @dataclass
@@ -210,16 +208,16 @@ class OpenRouterToolLoop:
     def __init__(
         self,
         client: OpenRouterClient,
-        tool_registry: ToolRegistry,
+        tool_executor: ToolExecutor,
         *,
         max_tool_steps: int = 4,
     ) -> None:
         self.client = client
-        self.tool_registry = tool_registry
+        self.tool_executor = tool_executor
         self.max_tool_steps = max_tool_steps
 
     def run_turn(self, messages: List[dict[str, Any]]) -> Tuple[str, List[dict[str, Any]]]:
-        tools = self.tool_registry.list_openrouter_tools()
+        tools = self.tool_executor.get_tool_schemas()
         local_messages = list(messages)
 
         for _ in range(self.max_tool_steps):
@@ -247,9 +245,10 @@ class OpenRouterToolLoop:
             for tool_call in tool_calls:
                 function = tool_call["function"]
                 try:
-                    content = self.tool_registry.execute_tool(
-                        function["name"],
-                        function.get("arguments", "{}"),
+                    arguments = json.loads(function.get("arguments", "{}") or "{}")
+                    content = json.dumps(
+                        self.tool_executor.execute_tool(function["name"], arguments),
+                        ensure_ascii=False,
                     )
                 except Exception as exc:
                     content = json.dumps(

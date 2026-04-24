@@ -89,9 +89,10 @@ class ToolRegistry:
     def list_openrouter_tools(self) -> list[dict[str, Any]]:
         return [tool.to_openrouter_tool() for tool in self._tools.values()]
 
-    def execute_tool(self, name: str, arguments_json: str) -> str:
+    def get_tool_schemas(self) -> list[dict[str, Any]]:
+        return self.list_openrouter_tools()
+
+    def execute_tool(self, name: str, arguments: dict[str, Any]) -> Any:
         if name not in self._tools:
             raise ValueError(f"Unknown tool: {name}")
-        arguments = json.loads(arguments_json or "{}")
-        result = self._tools[name].handler(**arguments)
-        return json.dumps(result, ensure_ascii=False)
+        return self._tools[name].handler(**arguments)
