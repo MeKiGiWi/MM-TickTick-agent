@@ -1,1 +1,0 @@
-"""TickTick provider package."""
