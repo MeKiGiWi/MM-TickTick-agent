@@ -397,6 +397,8 @@ class TickTickApiProvider(TickTickProvider):
             "title": task.title,
             "priority": task.priority,
         }
+        if task.parent_id:
+            payload["parentId"] = task.parent_id
         if task.content is not None:
             payload["content"] = task.content
         if task.due_date:
@@ -531,13 +533,14 @@ class TickTickApiProvider(TickTickProvider):
     def update_task(self, task_id: str, fields: dict[str, object]) -> Task:
         current = self.get_task_details(task_id)
         normalized_fields = self._normalize_update_fields(fields)
+        target_project_id: Optional[str] = None
         if "projectId" in normalized_fields:
-            normalized_fields["projectId"] = self.resolve_project_id(
-                str(normalized_fields["projectId"])
-            )
+            target_project_id = self.resolve_project_id(str(normalized_fields.pop("projectId")))
+            if not normalized_fields:
+                return self.move_task(task_id, target_project_id)
         merged_task = current.model_copy(
             update={
-                "project_id": normalized_fields.get("projectId", current.project_id),
+                "project_id": current.project_id,
                 "title": normalized_fields.get("title", current.title),
                 "content": normalized_fields.get("content", current.content),
                 "due_date": normalized_fields.get("dueDate", current.due_date),
@@ -549,7 +552,10 @@ class TickTickApiProvider(TickTickProvider):
         )
         payload = self._task_to_update_payload(merged_task)
         payload = self._normalize_task_datetime_fields(payload)
-        return self._normalize_task(self._request("POST", f"/task/{task_id}", json=payload))
+        updated = self._normalize_task(self._request("POST", f"/task/{task_id}", json=payload))
+        if target_project_id is not None:
+            updated = self.move_task(task_id, target_project_id)
+        return updated
 
     def list_projects(self) -> list[Project]:
         projects = self._load_projects()
@@ -584,21 +590,32 @@ class TickTickApiProvider(TickTickProvider):
 
     def move_task(self, task_id: str, project_id: str) -> Task:
         resolved_project_id = self.resolve_project_id(project_id)
-        current_project_id = self._task_project_cache.get(task_id)
-        if not current_project_id:
-            current_project_id = self.get_task_details(task_id).project_id
+        current = self.get_task_details(task_id)
+        if current.parent_id:
+            raise ValueError(
+                "Нельзя переместить подзадачу отдельно от родительской задачи, переместите родительскую задачу."
+            )
+        current_project_id = current.project_id
+        subtasks = list(current.subtasks)
+        if not subtasks:
+            subtasks = [
+                task for task in self.list_tasks(project_id=current_project_id) if task.parent_id == current.id
+            ]
+        move_items = [
+            {
+                "fromProjectId": current_project_id,
+                "toProjectId": resolved_project_id,
+                "taskId": item.id,
+            }
+            for item in [current, *subtasks]
+        ]
         self._request(
             "POST",
             "/task/move",
-            json=[
-                {
-                    "fromProjectId": current_project_id,
-                    "toProjectId": resolved_project_id,
-                    "taskId": task_id,
-                }
-            ],
+            json=move_items,
         )
-        self._task_project_cache[task_id] = resolved_project_id
+        for item in [current, *subtasks]:
+            self._task_project_cache[item.id] = resolved_project_id
         return self._get_task_details(task_id, project_id=resolved_project_id)
 
     def mark_complete(self, task_id: str) -> Task:

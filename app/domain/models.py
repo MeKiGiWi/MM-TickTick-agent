@@ -46,7 +46,10 @@ class Task(BaseModel):
         validation_alias=AliasChoices("is_overdue", "isOverdue"),
     )
     tags: list[str] = Field(default_factory=list)
-    subtasks: list["Task"] = Field(default_factory=list)
+    subtasks: list["Task"] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("subtasks", "items"),
+    )
 
     @field_validator("status", mode="before")
     @classmethod

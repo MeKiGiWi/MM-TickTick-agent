@@ -177,11 +177,17 @@ class MockTickTickProvider(TickTickProvider):
 
     def update_task(self, task_id: str, fields: dict[str, object]) -> Task:
         task = self.tasks[task_id]
-        for key, value in fields.items():
-            if key == "project_id" and value is not None:
-                value = self.resolve_project_id(str(value))
+        normalized_fields = dict(fields)
+        target_project_id = normalized_fields.pop("project_id", None)
+        if target_project_id is None:
+            target_project_id = normalized_fields.pop("projectId", None)
+        if target_project_id is not None and not normalized_fields:
+            return self.move_task(task_id, str(target_project_id))
+        for key, value in normalized_fields.items():
             if hasattr(task, key):
                 setattr(task, key, value)
+        if target_project_id is not None:
+            return self.move_task(task_id, str(target_project_id))
         return deepcopy(self._attach_project_name(task))
 
     def list_projects(self) -> list[Project]:
@@ -189,7 +195,19 @@ class MockTickTickProvider(TickTickProvider):
 
     def move_task(self, task_id: str, project_id: str) -> Task:
         task = self.tasks[task_id]
-        task.project_id = self.resolve_project_id(project_id)
+        if task.parent_id:
+            raise ValueError(
+                "Нельзя переместить подзадачу отдельно от родительской задачи, переместите родительскую задачу."
+            )
+        target_project_id = self.resolve_project_id(project_id)
+        related_tasks = [task] + [
+            candidate
+            for candidate in self.tasks.values()
+            if candidate.parent_id == task.id
+        ]
+        for item in related_tasks:
+            item.project_id = target_project_id
+            self._attach_project_name(item)
         return deepcopy(self._attach_project_name(task))
 
     def mark_complete(self, task_id: str) -> Task:

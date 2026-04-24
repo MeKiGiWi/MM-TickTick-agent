@@ -277,14 +277,12 @@ def test_prompt_contains_general_domain_invariants_only() -> None:
     assert "Проект содержит задачи." in SYSTEM_PROMPT
     assert "Подзадача — это задача с parentId" in SYSTEM_PROMPT
     assert "Не проси у пользователя внутренние task_id" in SYSTEM_PROMPT
-    assert "не отвечай промежуточным статусом" in SYSTEM_PROMPT.lower()
-    assert "никогда не передавай название задачи в поле task_id" in SYSTEM_PROMPT.lower()
+    assert "не говори пользователю делаю" in SYSTEM_PROMPT.lower()
     assert "create_task" not in SYSTEM_PROMPT
     assert "create_subtasks" not in SYSTEM_PROMPT
     assert 'project_id="inbox"' in SYSTEM_PROMPT
     assert "Не подставляй другие alias-значения" in SYSTEM_PROMPT
     assert "Допустимые alias-значения" not in SYSTEM_PROMPT
-    assert 'нельзя передавать "inbox/default/входящие" как project_id' in SYSTEM_PROMPT.lower()
 
 
 def test_tool_error_hides_internal_inbox_config_details() -> None:

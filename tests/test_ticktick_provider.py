@@ -55,6 +55,28 @@ def test_task_model_accepts_real_ticktick_payload() -> None:
     assert task.time_zone == "Europe/Moscow"
 
 
+def test_task_model_accepts_subtasks_from_items_alias() -> None:
+    task = Task.model_validate(
+        {
+            "id": "task-1",
+            "title": "Parent",
+            "projectId": "project-1",
+            "status": 0,
+            "items": [
+                {
+                    "id": "sub-1",
+                    "title": "Child",
+                    "projectId": "project-1",
+                    "parentId": "task-1",
+                    "status": 0,
+                }
+            ],
+        }
+    )
+    assert [item.id for item in task.subtasks] == ["sub-1"]
+    assert task.subtasks[0].parent_id == "task-1"
+
+
 def test_normalize_update_fields_maps_ticktick_date_aliases() -> None:
     normalized = TickTickApiProvider._normalize_update_fields(
         {
@@ -247,6 +269,13 @@ def test_move_task_sends_from_project_id(monkeypatch) -> None:
         calls.append((method, path, kwargs))
         if path == "/task/move":
             return [{"id": "task-1", "etag": "etag"}]
+        if path == "/project/project-1/task/task-1":
+            return {
+                "id": "task-1",
+                "title": "before move",
+                "projectId": "project-1",
+                "status": 0,
+            }
         return {
             "id": "task-1",
             "title": "moved",
@@ -273,6 +302,70 @@ def test_move_task_sends_from_project_id(monkeypatch) -> None:
             ]
         },
     )
+
+
+def test_move_parent_task_moves_subtasks_together(monkeypatch) -> None:
+    provider = build_provider()
+    provider._projects_cache["project-1"] = Project(id="project-1", name="Inbox")
+    provider._projects_cache["project-2"] = Project(id="project-2", name="Work")
+    calls: list[tuple[str, str, dict[str, Any]]] = []
+    parent = Task(
+        id="task-1",
+        title="Parent",
+        project_id="project-1",
+        subtasks=[
+            Task(id="sub-1", title="Sub 1", project_id="project-1", parent_id="task-1"),
+            Task(id="sub-2", title="Sub 2", project_id="project-1", parent_id="task-1"),
+        ],
+    )
+
+    def fake_request(method: str, path: str, **kwargs: Any) -> Any:
+        calls.append((method, path, kwargs))
+        if path == "/task/move":
+            return [{"id": item["taskId"]} for item in kwargs["json"]]
+        return {
+            "id": "task-1",
+            "title": "Parent",
+            "projectId": "project-2",
+            "status": 0,
+        }
+
+    monkeypatch.setattr(provider, "get_task_details", lambda task_id: parent)
+    monkeypatch.setattr(provider, "_request", fake_request)
+
+    moved = provider.move_task("task-1", "project-2")
+
+    assert moved.project_id == "project-2"
+    move_call = next(call for call in calls if call[1] == "/task/move")
+    assert move_call[2]["json"] == [
+        {"fromProjectId": "project-1", "toProjectId": "project-2", "taskId": "task-1"},
+        {"fromProjectId": "project-1", "toProjectId": "project-2", "taskId": "sub-1"},
+        {"fromProjectId": "project-1", "toProjectId": "project-2", "taskId": "sub-2"},
+    ]
+
+
+def test_move_subtask_alone_refuses_to_detach(monkeypatch) -> None:
+    provider = build_provider()
+    calls: list[tuple[str, str, dict[str, Any]]] = []
+    subtask = Task(
+        id="sub-1",
+        title="Child",
+        project_id="project-1",
+        parent_id="task-1",
+    )
+
+    def fake_request(method: str, path: str, **kwargs: Any) -> Any:
+        calls.append((method, path, kwargs))
+        raise AssertionError("move endpoint should not be called for detached subtask move")
+
+    monkeypatch.setattr(provider, "get_task_details", lambda task_id: subtask)
+    monkeypatch.setattr(provider, "resolve_project_id", lambda project_id=None: str(project_id))
+    monkeypatch.setattr(provider, "_request", fake_request)
+
+    with pytest.raises(ValueError, match="Нельзя переместить подзадачу отдельно"):
+        provider.move_task("sub-1", "project-2")
+
+    assert not calls
 
 
 def test_move_task_resolves_inbox_alias(monkeypatch) -> None:
@@ -698,6 +791,15 @@ def test_inbox_id_discovered_from_list_tasks_is_reused_after_inbox_becomes_empty
         if path == "/task/move":
             assert kwargs["json"][0]["toProjectId"] == "inbox121427197"
             return {}
+        if path == "/project/internship/task/task-1":
+            return {
+                "id": "task-1",
+                "title": "Привет мир",
+                "projectId": "internship",
+                "status": 0,
+            }
+        if path == "/project/internship/data":
+            return {"tasks": []}
         if path == "/project/inbox121427197/task/task-1":
             return {
                 "id": "task-1",
@@ -891,11 +993,16 @@ def test_update_task_sends_safe_full_payload(monkeypatch) -> None:
     assert recorded["json"]["timeZone"] == "Europe/Moscow"
 
 
-def test_update_task_resolves_inbox_alias_in_payload(monkeypatch) -> None:
-    provider = build_provider(inbox_project_id="real-inbox")
-    current = Task(id="task-1", title="hello world", project_id="work", project_name="Work")
+def test_update_task_preserves_parent_id_in_payload(monkeypatch) -> None:
+    provider = build_provider()
+    current = Task(
+        id="task-1",
+        title="hello world",
+        project_id="project-1",
+        project_name="Inbox",
+        parent_id="parent-1",
+    )
     monkeypatch.setattr(provider, "get_task_details", lambda task_id: current)
-    monkeypatch.setattr(provider, "resolve_project_id", lambda project_id=None: "real-inbox")
     recorded: dict[str, Any] = {}
 
     def fake_request(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
@@ -904,10 +1011,53 @@ def test_update_task_resolves_inbox_alias_in_payload(monkeypatch) -> None:
             "id": "task-1",
             "title": kwargs["json"]["title"],
             "projectId": kwargs["json"]["projectId"],
+            "parentId": kwargs["json"].get("parentId"),
             "status": 0,
         }
 
     monkeypatch.setattr(provider, "_request", fake_request)
+    task = provider.update_task("task-1", {"title": "updated title"})
+    assert task.parent_id == "parent-1"
+    assert recorded["json"]["parentId"] == "parent-1"
+
+
+def test_update_task_project_id_uses_move_endpoint(monkeypatch) -> None:
+    provider = build_provider(inbox_project_id="real-inbox")
+    current = Task(id="task-1", title="hello world", project_id="work", project_name="Work")
+    monkeypatch.setattr(provider, "get_task_details", lambda task_id: current)
+    monkeypatch.setattr(
+        provider,
+        "resolve_project_id",
+        lambda project_id=None: "real-inbox" if project_id == "inbox" else str(project_id),
+    )
+    calls: list[tuple[str, str, dict[str, Any]]] = []
+
+    def fake_request(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        calls.append((method, path, kwargs))
+        if path == "/task/move":
+            return [{"id": "task-1"}]
+        if path == "/project/work/data":
+            return {"tasks": []}
+        if path == "/project/real-inbox/task/task-1":
+            return {
+                "id": "task-1",
+                "title": "hello world",
+                "projectId": "real-inbox",
+                "status": 0,
+            }
+        raise AssertionError(f"Unexpected request: {method} {path}")
+
+    monkeypatch.setattr(provider, "_request", fake_request)
+
     task = provider.update_task("task-1", {"project_id": "inbox"})
+
     assert task.project_id == "real-inbox"
-    assert recorded["json"]["projectId"] == "real-inbox"
+    assert not any(path == "/task/task-1" for _, path, _ in calls)
+    move_call = next(call for call in calls if call[1] == "/task/move")
+    assert move_call[2]["json"] == [
+        {
+            "fromProjectId": "work",
+            "toProjectId": "real-inbox",
+            "taskId": "task-1",
+        }
+    ]
