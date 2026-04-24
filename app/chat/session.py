@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import json
 import os
 from datetime import datetime
@@ -10,7 +8,7 @@ from app.domain.models import Project
 from app.chat.prompts import SYSTEM_PROMPT
 from app.config.setup import ensure_config
 from app.llm.openrouter import OpenRouterClient, OpenRouterToolLoop
-from app.services.provider_factory import build_ticktick_provider
+from app.providers.ticktick.client import TickTickApiProvider
 from app.storage.config_store import ConfigStore
 from app.tools.registry import ToolRegistry
 from app.utils.timezone import resolve_timezone, timezone_label
@@ -26,9 +24,8 @@ class ChatSession:
         self.root = root or Path(__file__).resolve().parents[2]
         self.config_store = ConfigStore(self.root)
         self.config = ensure_config(self.root)
-        self.provider = build_ticktick_provider(
-            self.config.ticktick,
-            self.root,
+        self.provider = TickTickApiProvider(
+            credentials=self.config.ticktick,
             user_timezone=self.config.user_timezone,
         )
         self.registry = ToolRegistry(self.provider, user_timezone=self.config.user_timezone)
@@ -173,7 +170,7 @@ class ChatSession:
 
     def _persist_config_if_needed(self) -> None:
         ticktick_config = getattr(self.config, "ticktick", None)
-        if ticktick_config is None or getattr(ticktick_config, "provider", None) != "ticktick":
+        if ticktick_config is None:
             return
         inbox_project_id = getattr(ticktick_config, "inbox_project_id", "")
         if not isinstance(inbox_project_id, str) or not inbox_project_id.casefold().startswith(

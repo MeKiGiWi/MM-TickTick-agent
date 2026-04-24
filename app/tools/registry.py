@@ -1,11 +1,9 @@
-from __future__ import annotations
-
 import json
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from app.providers.ticktick.base import TickTickProvider
+from app.providers.ticktick.client import TickTickApiProvider
 from app.tools.base import ToolSpec
 from app.tools.handlers import ToolHandlers
 from app.tools.presenter import ToolPresenter
@@ -15,7 +13,7 @@ from app.tools.task_search import TaskSearch
 class ToolRegistry:
     def __init__(
         self,
-        provider: TickTickProvider,
+        provider: TickTickApiProvider,
         user_timezone: Optional[str] = None,
         now_provider: Optional[Callable[[], datetime]] = None,
         specs_path: Optional[Path] = None,

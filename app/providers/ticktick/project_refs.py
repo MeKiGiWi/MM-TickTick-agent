@@ -1,10 +1,8 @@
-from __future__ import annotations
-
 import re
 from typing import Optional
 
 
-INBOX_PROJECT_ALIASES = {"inbox", "default", "входящие", "инбокс"}
+INBOX_PROJECT_ALIASES = {"inbox", "default"}
 _ALIAS_SPLIT_PATTERN = re.compile(r"\s*(?:/|,|\|)\s*")
 
 

@@ -10,10 +10,9 @@
     "reasoning_enabled": true
   },
   "ticktick": {
-    "provider": "mock",
-    "client_id": "",
+    "client_id": "U30jXW3vJTHB58tekv",
     "client_secret": "",
-    "redirect_uri": "",
+    "redirect_uri": "http://localhost:8765/callback",
     "access_token": "",
     "scope": "tasks:write tasks:read",
     "auth_state": "",

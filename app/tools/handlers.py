@@ -1,9 +1,7 @@
-from __future__ import annotations
-
 from datetime import date, timedelta
 from typing import Any, Optional
 
-from app.providers.ticktick.base import TickTickProvider
+from app.providers.ticktick.client import TickTickApiProvider
 from app.tools.presenter import ToolPresenter
 from app.tools.task_search import TaskSearch
 
@@ -11,7 +9,7 @@ from app.tools.task_search import TaskSearch
 class ToolHandlers:
     def __init__(
         self,
-        provider: TickTickProvider,
+        provider: TickTickApiProvider,
         presenter: ToolPresenter,
         task_search: TaskSearch,
     ) -> None:

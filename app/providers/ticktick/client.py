@@ -7,7 +7,6 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from app.domain.models import Project, Task, TickTickCredentials
-from app.providers.ticktick.base import TickTickProvider
 from app.providers.ticktick.project_refs import (
     is_default_project_alias as normalize_default_project_alias,
 )
@@ -15,7 +14,7 @@ from app.providers.ticktick.project_refs import normalize_project_ref
 from app.utils.timezone import configured_timezone_name, resolve_timezone, timezone_label
 
 
-class TickTickApiProvider(TickTickProvider):
+class TickTickApiProvider:
     def __init__(
         self,
         credentials: TickTickCredentials,
@@ -599,7 +598,9 @@ class TickTickApiProvider(TickTickProvider):
         subtasks = list(current.subtasks)
         if not subtasks:
             subtasks = [
-                task for task in self.list_tasks(project_id=current_project_id) if task.parent_id == current.id
+                task
+                for task in self.list_tasks(project_id=current_project_id)
+                if task.parent_id == current.id
             ]
         move_items = [
             {

@@ -1,11 +1,10 @@
-from __future__ import annotations
-
 from typing import Any, Literal, Optional
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 
 TaskStatus = Literal["normal", "completed"]
+DEFAULT_TICKTICK_CLIENT_ID = "U30jXW3vJTHB58tekv"
 
 
 class Task(BaseModel):
@@ -70,8 +69,9 @@ class Project(BaseModel):
 
 
 class TickTickCredentials(BaseModel):
-    provider: Literal["mock", "ticktick"] = "mock"
-    client_id: str = ""
+    model_config = ConfigDict(extra="ignore")
+
+    client_id: str = DEFAULT_TICKTICK_CLIENT_ID
     client_secret: str = ""
     redirect_uri: str = ""
     access_token: str = ""

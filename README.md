@@ -1,6 +1,6 @@
 # TickTick Chat Agent
 
-Простой CLI-агент для TickTick с OpenRouter tool calling. Приложение остаётся небольшим: без веб-интерфейса, без БД, с русскими ответами и с мок-провайдером для разработки и тестов.
+Простой CLI-агент для TickTick с OpenRouter tool calling. Приложение остаётся небольшим: без веб-интерфейса, без БД, с русскими ответами и с прямой интеграцией с TickTick через OAuth.
 
 ## Архитектура
 
@@ -12,8 +12,6 @@
   Клиент OpenRouter с локальным fallback, классификацией ошибок и tool loop с ограничением шагов.
 - `app/providers/ticktick/client.py`
   Реальный TickTick provider с явным разрешением проектов, поддержкой `parentId` и composite-операциями.
-- `app/providers/mock/ticktick.py`
-  Мок-провайдер, совместимый с теми же интерфейсами.
 - `app/tools/specs/ticktick_tools.json`
   Единственный источник истины для tool names, описаний и JSON schemas.
 - `app/tools/registry.py`
@@ -76,7 +74,7 @@ python3 -m app
 docker compose run --rm --service-ports app
 ```
 
-При первом запуске CLI-wizard создаст `config.local.json` и при выборе `ticktick` запустит OAuth login.
+При первом запуске CLI-wizard создаст `config.local.json` и запустит TickTick OAuth login.
 
 ## Конфиг
 
@@ -97,7 +95,13 @@ docker compose run --rm --service-ports app
     "max_tool_steps": 4
   },
   "ticktick": {
-    "provider": "mock"
+    "client_id": "U30jXW3vJTHB58tekv",
+    "client_secret": "",
+    "redirect_uri": "http://localhost:8765/callback",
+    "access_token": "",
+    "scope": "tasks:write tasks:read",
+    "auth_state": "",
+    "inbox_project_id": "inbox"
   }
 }
 ```
@@ -108,14 +112,13 @@ docker compose run --rm --service-ports app
 - Для free-моделей держите хотя бы одну не-free fallback-модель, если хотите переживать `503 no healthy upstream`.
 - `reasoning_enabled` по умолчанию выключен: для этого CLI-агента это дешевле и предсказуемее.
 
-Для реального TickTick provider нужны `client_id`, `client_secret`, `redirect_uri` и `access_token`.
+Приложение работает только с TickTick OAuth. `client_id` уже встроен в приложение по умолчанию, поэтому обычно нужно указать только `client_secret`, `redirect_uri` и затем пройти OAuth для получения `access_token`.
 
 Если official TickTick API не смог автоматически вывести Inbox ID, укажите его вручную:
 
 ```json
 {
   "ticktick": {
-    "provider": "ticktick",
     "inbox_project_id": "inbox121427197"
   }
 }
@@ -129,7 +132,6 @@ docker compose run --rm --service-ports app
 
 ## Качество
 
-- Тесты: `python3 -m pytest`
 - Линтер: `python3 -m ruff check .`
 - Форматирование: `python3 -m ruff format .`
 

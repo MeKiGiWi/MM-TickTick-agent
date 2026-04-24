@@ -1,15 +1,13 @@
-from __future__ import annotations
-
 from typing import Any, Optional
 
-from app.providers.ticktick.base import TickTickProvider
+from app.providers.ticktick.client import TickTickApiProvider
 from app.tools.presenter import ToolPresenter
 
 
 class TaskSearch:
     def __init__(
         self,
-        provider: TickTickProvider,
+        provider: TickTickApiProvider,
         presenter: ToolPresenter,
         *,
         now_provider: Optional[callable] = None,
