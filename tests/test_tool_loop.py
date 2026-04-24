@@ -270,3 +270,91 @@ def test_tool_loop_supports_composite_tool_flow() -> None:
     tool_messages = [message for message in messages if message["role"] == "tool"]
     assert len(tool_messages) == 1
     assert '"subtasks"' in tool_messages[0]["content"]
+
+
+class MoveToInboxRegressionClient:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def create_chat_completion(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+    ) -> ChatCompletionResult:
+        self.calls += 1
+        if self.calls == 1:
+            return ChatCompletionResult(
+                message={
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call-1",
+                            "type": "function",
+                            "function": {
+                                "name": "list_tasks",
+                                "arguments": '{"search":"привет мир","status":"open"}',
+                            },
+                        }
+                    ],
+                },
+                raw_response={"model": "openrouter/auto-picked"},
+            )
+        if self.calls == 2:
+            last_tool_message = [message for message in messages if message["role"] == "tool"][-1]
+            assert '"id": "69ebb3bf8f08c322e5a4f9a4"' in last_tool_message["content"]
+            return ChatCompletionResult(
+                message={
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call-2",
+                            "type": "function",
+                            "function": {
+                                "name": "move_task",
+                                "arguments": '{"task_id":"69ebb3bf8f08c322e5a4f9a4","project_id":"inbox"}',
+                            },
+                        }
+                    ],
+                },
+                raw_response={"model": "openrouter/auto-picked"},
+            )
+        return ChatCompletionResult(
+            message={"role": "assistant", "content": "Переместил задачу в Inbox."},
+            raw_response={"model": "openrouter/auto-picked"},
+        )
+
+
+def test_tool_loop_regression_move_named_task_to_inbox_avoids_old_alias_string() -> None:
+    provider = MockTickTickProvider()
+    provider.tasks = {
+        "69ebb3bf8f08c322e5a4f9a4": provider.tasks["task-1"].model_copy(
+            update={
+                "id": "69ebb3bf8f08c322e5a4f9a4",
+                "title": "Привет мир!",
+                "project_id": "work",
+                "project_name": "Work",
+            }
+        )
+    }
+    loop = OpenRouterToolLoop(
+        MoveToInboxRegressionClient(), ToolRegistry(provider), max_tool_steps=4
+    )
+    answer, messages = loop.run_turn(
+        [{"role": "user", "content": "перемести задачу привет мир в Inbox"}]
+    )
+
+    assert answer == "Переместил задачу в Inbox."
+    assistant_messages = [message for message in messages if message["role"] == "assistant"]
+    assert assistant_messages[0]["tool_calls"][0]["function"]["arguments"] == (
+        '{"search":"привет мир","status":"open"}'
+    )
+    assert assistant_messages[1]["tool_calls"][0]["function"]["arguments"] == (
+        '{"task_id":"69ebb3bf8f08c322e5a4f9a4","project_id":"inbox"}'
+    )
+    assert all(
+        "inbox/default/входящие" not in str(message.get("tool_calls", ""))
+        for message in assistant_messages
+    )

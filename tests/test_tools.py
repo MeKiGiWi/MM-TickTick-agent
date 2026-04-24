@@ -21,9 +21,16 @@ def test_registry_loads_tools_from_json_specs() -> None:
     create_task = next(
         tool["function"] for tool in tools if tool["function"]["name"] == "create_task"
     )
-    assert "configured default project" in create_task["description"]
+    assert 'project_id="inbox"' in create_task["description"]
     assert "additionalProperties" not in create_task["parameters"]
     assert create_task["parameters"]["required"] == ["title"]
+
+
+def test_tool_specs_no_longer_contain_ambiguous_inbox_alias_string() -> None:
+    registry = ToolRegistry(MockTickTickProvider(), user_timezone="Europe/Moscow")
+    content = registry.specs_path.read_text(encoding="utf-8")
+    assert "inbox/default/входящие" in content
+    assert "such as inbox/default/входящие" not in content
 
 
 def test_create_task_tool_uses_mock_provider_defaults() -> None:
@@ -156,6 +163,14 @@ def test_list_projects_tool_filters_by_query() -> None:
     assert [item["name"] for item in payload] == ["Work"]
 
 
+def test_list_projects_tool_filters_inbox_by_alias_queries() -> None:
+    registry = ToolRegistry(MockTickTickProvider(), user_timezone="Europe/Moscow")
+    inbox_payload = json.loads(registry.execute_tool("list_projects", '{"query":"inbox"}'))
+    incoming_payload = json.loads(registry.execute_tool("list_projects", '{"query":"входящие"}'))
+    assert [item["name"] for item in inbox_payload] == ["Inbox"]
+    assert [item["name"] for item in incoming_payload] == ["Inbox"]
+
+
 def test_list_projects_tool_schema_does_not_require_id_or_name() -> None:
     registry = ToolRegistry(MockTickTickProvider(), user_timezone="Europe/Moscow")
     list_projects = next(
@@ -225,12 +240,73 @@ def test_create_subtasks_schema_keeps_required_fields() -> None:
     assert create_subtasks["parameters"]["required"] == ["task_id", "titles"]
 
 
+def test_task_id_tools_explicitly_say_to_find_real_id_first() -> None:
+    registry = ToolRegistry(MockTickTickProvider(), user_timezone="Europe/Moscow")
+    tools = {
+        tool["function"]["name"]: tool["function"] for tool in registry.list_openrouter_tools()
+    }
+
+    assert "real task_id" in tools["move_task"]["description"]
+    assert "Never pass a task title" in tools["move_task"]["description"]
+    assert "first call list_tasks" in tools["move_task"]["description"]
+    assert (
+        "Never put a task title here"
+        in tools["move_task"]["parameters"]["properties"]["task_id"]["description"]
+    )
+    assert "real task_id" in tools["mark_complete"]["description"]
+    assert (
+        "Never put a task title here"
+        in tools["get_task_details"]["parameters"]["properties"]["task_id"]["description"]
+    )
+
+
+def test_list_tasks_description_mentions_finding_task_id() -> None:
+    registry = ToolRegistry(MockTickTickProvider(), user_timezone="Europe/Moscow")
+    tools = {
+        tool["function"]["name"]: tool["function"] for tool in registry.list_openrouter_tools()
+    }
+
+    assert "obtain its real task_id" in tools["list_tasks"]["description"]
+    assert (
+        "Use this to find the task"
+        in tools["list_tasks"]["parameters"]["properties"]["search"]["description"]
+    )
+
+
 def test_prompt_contains_general_domain_invariants_only() -> None:
     assert "Проект содержит задачи." in SYSTEM_PROMPT
     assert "Подзадача — это задача с parentId" in SYSTEM_PROMPT
     assert "Не проси у пользователя внутренние task_id" in SYSTEM_PROMPT
+    assert "не отвечай промежуточным статусом" in SYSTEM_PROMPT.lower()
+    assert "никогда не передавай название задачи в поле task_id" in SYSTEM_PROMPT.lower()
     assert "create_task" not in SYSTEM_PROMPT
     assert "create_subtasks" not in SYSTEM_PROMPT
+    assert 'project_id="inbox"' in SYSTEM_PROMPT
+    assert "Не подставляй другие alias-значения" in SYSTEM_PROMPT
+    assert "Допустимые alias-значения" not in SYSTEM_PROMPT
+    assert 'нельзя передавать "inbox/default/входящие" как project_id' in SYSTEM_PROMPT.lower()
+
+
+def test_tool_error_hides_internal_inbox_config_details() -> None:
+    class FailingProvider(MockTickTickProvider):
+        def move_task(self, task_id: str, project_id: str):
+            raise ValueError(
+                'Не удалось определить real project_id для Inbox. Укажите '
+                'ticktick.inbox_project_id в config.local.json, например "inbox121427197".'
+            )
+
+    registry = ToolRegistry(FailingProvider(), user_timezone="Europe/Moscow")
+    payload = json.loads(
+        registry.execute_tool(
+            "move_task",
+            json.dumps({"task_id": "task-1", "project_id": "inbox"}, ensure_ascii=False),
+        )
+    )
+
+    assert payload["error"]["tool"] == "move_task"
+    assert "TickTick API не вернул реальный идентификатор Inbox" in payload["error"]["message"]
+    assert "config.local.json" not in payload["error"]["message"]
+    assert "ticktick.inbox_project_id" not in payload["error"]["message"]
 
 
 def test_update_task_updates_with_explicit_arguments() -> None:
@@ -451,6 +527,65 @@ def test_update_task_by_search_updates_unique_exact_title() -> None:
         )
     )
     assert payload["title"] == "hello world!"
+
+
+def test_update_task_by_search_project_id_is_move_target_not_search_scope() -> None:
+    provider = MockTickTickProvider()
+    provider.tasks = {
+        "task-1": provider.tasks["task-1"].model_copy(
+            update={
+                "title": "Привет мир!",
+                "project_id": "work",
+                "project_name": "Work",
+            }
+        )
+    }
+    registry = ToolRegistry(provider, user_timezone="Europe/Moscow")
+    payload = json.loads(
+        registry.execute_tool(
+            "update_task_by_search",
+            json.dumps(
+                {
+                    "search": "привет мир",
+                    "project_id": "inbox",
+                    "priority": 3,
+                },
+                ensure_ascii=False,
+            ),
+        )
+    )
+    assert payload["id"] == "task-1"
+    assert payload["project_id"] == "inbox"
+    assert payload["project_name"] == "Inbox"
+    assert payload["priority"] == 3
+
+
+def test_update_task_by_search_supports_search_project_id_scope() -> None:
+    provider = MockTickTickProvider()
+    provider.tasks = {
+        "task-1": provider.tasks["task-1"].model_copy(
+            update={"title": "Привет мир!", "project_id": "work", "project_name": "Work"}
+        ),
+        "task-2": provider.tasks["task-2"].model_copy(
+            update={"title": "Привет мир!", "project_id": "personal", "project_name": "Personal"}
+        ),
+    }
+    registry = ToolRegistry(provider, user_timezone="Europe/Moscow")
+    payload = json.loads(
+        registry.execute_tool(
+            "update_task_by_search",
+            json.dumps(
+                {
+                    "search": "привет мир",
+                    "search_project_id": "personal",
+                    "priority": 5,
+                },
+                ensure_ascii=False,
+            ),
+        )
+    )
+    assert payload["id"] == "task-2"
+    assert payload["priority"] == 5
 
 
 def test_update_task_by_search_returns_not_found_without_asking_for_id() -> None:

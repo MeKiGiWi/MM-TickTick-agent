@@ -30,8 +30,20 @@
 - Проект содержит задачи.
 - Задача принадлежит проекту.
 - Подзадача это обычная задача с `parentId`.
-- Алиасы `inbox`, `default` и `входящие` трактуются как ссылка на настроенный default project, а не как буквальные TickTick ids.
+- Алиасы `inbox`, `default` и `входящие` трактуются как ссылка на реальный TickTick Inbox.
 - При создании задач provider всегда возвращает реальный `project_id`, даже если TickTick ответил неполным payload.
+
+## Inbox и проекты
+
+- Inbox это специальный default project.
+- В tools и prompt/specs для Inbox используется только alias `project_id="inbox"`.
+- Alias `inbox` не равен реальному TickTick `project_id`. Для API нужен real id вида `inbox121427197`.
+- Для создания задачи в Inbox `project_id` можно не передавать.
+- Для просмотра Inbox: `list_tasks(project_id="inbox")`.
+- Для переноса в Inbox: `move_task(task_id=<real task id>, project_id="inbox")`.
+- Обычные проекты можно указывать по real `project_id` или точному имени.
+- `/project` может не возвращать Inbox как обычный проект, поэтому provider отдельно резолвит и кэширует real Inbox ID.
+- Если real Inbox ID однажды найден, provider переиспользует его даже когда Inbox потом становится пустым.
 
 ## Доступные tools
 
@@ -98,6 +110,23 @@ docker compose run --rm --service-ports app
 
 Для реального TickTick provider нужны `client_id`, `client_secret`, `redirect_uri` и `access_token`.
 
+Если official TickTick API не смог автоматически вывести Inbox ID, укажите его вручную:
+
+```json
+{
+  "ticktick": {
+    "provider": "ticktick",
+    "inbox_project_id": "inbox121427197"
+  }
+}
+```
+
+Подсказки:
+
+- Значение `"inbox"` в `ticktick.inbox_project_id` трактуется только как alias или unknown, а не как real TickTick project id.
+- Real Inbox ID часто можно увидеть в результате `list_tasks(project_id="inbox")`, когда в Inbox есть хотя бы одна задача.
+- Если у вас доступен TickTick web/API status view, real Inbox ID можно взять и оттуда.
+
 ## Качество
 
 - Тесты: `python3 -m pytest`
@@ -108,5 +137,5 @@ docker compose run --rm --service-ports app
 
 - Репозиторий очищен от кэшей, локальных конфигов и лишних файлов упаковки.
 - `ToolRegistry` стал тонким, а доменная логика вынесена в отдельные модули.
-- TickTick provider теперь надёжно разрешает default project, корректно создаёт подзадачи и поддерживает composite tool.
+- TickTick provider теперь надёжно разрешает реальный Inbox, корректно создаёт подзадачи и поддерживает composite tool.
 - OpenRouter-клиент упростил fallback и стал возвращать более понятные ошибки для rate limit, unavailable upstream и network/config проблем.

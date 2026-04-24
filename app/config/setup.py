@@ -57,6 +57,11 @@ def _build_ticktick_credentials() -> TickTickCredentials:
     print("TickTick provider: ticktick")
     print("Для реального TickTick нужен TickTick Developer app с OAuth credentials.")
     print("Эти значения будут сохранены в config.local.json.")
+    print('Поле ticktick.inbox_project_id по умолчанию остаётся alias "inbox".')
+    print(
+        "Если TickTick API не сможет автоматически определить real Inbox ID, "
+        'позже укажите его вручную, например "inbox121427197".'
+    )
 
     client_id = _prompt("TickTick client_id")
     client_secret = _prompt("TickTick client_secret")
@@ -84,12 +89,6 @@ def _default_user_timezone() -> Optional[str]:
     if isinstance(key, str) and key:
         return key
     return None
-
-
-def _prompt_ticktick_inbox_project_id(current_value: str = "inbox") -> str:
-    print()
-    print("OAuth завершен. Теперь можно настроить, куда складывать новые задачи.")
-    return _prompt("TickTick inbox_project_id", current_value or "inbox")
 
 
 def ensure_config(root: Path) -> AppConfig:
@@ -122,9 +121,6 @@ def ensure_config(root: Path) -> AppConfig:
         oauth_result = run_oauth_login(config.ticktick)
         config.ticktick.access_token = oauth_result.access_token
         config.ticktick.auth_state = oauth_result.state
-        config.ticktick.inbox_project_id = _prompt_ticktick_inbox_project_id(
-            config.ticktick.inbox_project_id
-        )
     store.save(config)
     print(f"Конфиг сохранен в {store.path}")
     return config

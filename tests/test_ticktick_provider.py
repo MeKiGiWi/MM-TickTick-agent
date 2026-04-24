@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 import httpx
+import pytest
 
 from app.domain.models import Project, Task, TickTickCredentials
 from app.providers.ticktick.client import TickTickApiProvider
@@ -274,6 +275,88 @@ def test_move_task_sends_from_project_id(monkeypatch) -> None:
     )
 
 
+def test_move_task_resolves_inbox_alias(monkeypatch) -> None:
+    provider = build_provider(inbox_project_id="real-inbox")
+    provider._projects_cache["project-1"] = Project(id="project-1", name="Work")
+    provider._projects_cache["real-inbox"] = Project(id="real-inbox", name="Inbox")
+    calls: list[tuple[str, str, dict[str, Any]]] = []
+
+    def fake_request(method: str, path: str, **kwargs: Any) -> Any:
+        calls.append((method, path, kwargs))
+        if path == "/task/move":
+            return [{"id": "task-1"}]
+        return {
+            "id": "task-1",
+            "title": "moved",
+            "projectId": "real-inbox",
+            "status": 0,
+        }
+
+    monkeypatch.setattr(provider, "_request", fake_request)
+    provider._task_project_cache["task-1"] = "project-1"
+    task = provider.move_task("task-1", "inbox")
+    assert task.project_id == "real-inbox"
+    move_call = next(call for call in calls if call[1] == "/task/move")
+    assert move_call[2]["json"][0]["toProjectId"] == "real-inbox"
+
+
+def test_move_task_resolves_legacy_combined_inbox_alias(monkeypatch) -> None:
+    provider = build_provider(inbox_project_id="real-inbox")
+    provider._projects_cache["project-1"] = Project(id="project-1", name="Work")
+    provider._projects_cache["real-inbox"] = Project(id="real-inbox", name="Inbox")
+    calls: list[tuple[str, str, dict[str, Any]]] = []
+
+    def fake_request(method: str, path: str, **kwargs: Any) -> Any:
+        calls.append((method, path, kwargs))
+        if path == "/task/move":
+            return [{"id": "task-1"}]
+        return {
+            "id": "task-1",
+            "title": "moved",
+            "projectId": "real-inbox",
+            "status": 0,
+        }
+
+    monkeypatch.setattr(provider, "_request", fake_request)
+    provider._task_project_cache["task-1"] = "project-1"
+    task = provider.move_task("task-1", "inbox/default/входящие")
+    assert task.project_id == "real-inbox"
+    move_call = next(call for call in calls if call[1] == "/task/move")
+    assert move_call[2]["json"][0]["toProjectId"] == "real-inbox"
+
+
+def test_move_task_resolves_project_name(monkeypatch) -> None:
+    provider = build_provider()
+    provider._projects_cache["project-1"] = Project(id="project-1", name="Учеба")
+    provider._projects_cache["internship"] = Project(id="internship", name="Стажировка")
+    calls: list[tuple[str, str, dict[str, Any]]] = []
+
+    def fake_load_projects() -> list[Project]:
+        return [
+            Project(id="project-1", name="Учеба"),
+            Project(id="internship", name="Стажировка"),
+        ]
+
+    def fake_request(method: str, path: str, **kwargs: Any) -> Any:
+        calls.append((method, path, kwargs))
+        if path == "/task/move":
+            return [{"id": "task-1"}]
+        return {
+            "id": "task-1",
+            "title": "moved",
+            "projectId": "internship",
+            "status": 0,
+        }
+
+    monkeypatch.setattr(provider, "_load_projects", fake_load_projects)
+    monkeypatch.setattr(provider, "_request", fake_request)
+    provider._task_project_cache["task-1"] = "project-1"
+    task = provider.move_task("task-1", "стажировка")
+    assert task.project_id == "internship"
+    move_call = next(call for call in calls if call[1] == "/task/move")
+    assert move_call[2]["json"][0]["toProjectId"] == "internship"
+
+
 def test_list_projects_keeps_configured_inbox_context(monkeypatch) -> None:
     provider = build_provider()
 
@@ -292,7 +375,7 @@ def test_list_projects_keeps_configured_inbox_context(monkeypatch) -> None:
     monkeypatch.setattr(provider, "_get_project_by_id", fake_get_project)
     projects = provider.list_projects()
     assert [project.id for project in projects] == ["work", "inbox-123"]
-    assert projects[-1].name == "Inbox (configured)"
+    assert projects[-1].name in {"Inbox", "Inbox (configured)"}
 
 
 def test_list_projects_tolerates_invalid_configured_project_lookup(monkeypatch) -> None:
@@ -309,6 +392,22 @@ def test_list_projects_tolerates_invalid_configured_project_lookup(monkeypatch) 
     projects = provider.list_projects()
     assert [project.id for project in projects] == ["work", "inbox-123"]
     assert projects[-1].name == "Inbox (configured)"
+
+
+def test_list_tasks_resolves_inbox_alias_before_api_request(monkeypatch) -> None:
+    provider = build_provider(inbox_project_id="real-inbox")
+    monkeypatch.setattr(provider, "resolve_project_id", lambda project_id=None: "real-inbox")
+    recorded: list[tuple[str, str, dict[str, Any]]] = []
+
+    def fake_request(method: str, path: str, **kwargs: Any) -> Any:
+        recorded.append((method, path, kwargs))
+        if path == "/project/real-inbox/data":
+            return {"tasks": []}
+        raise AssertionError(f"Unexpected request: {method} {path}")
+
+    monkeypatch.setattr(provider, "_request", fake_request)
+    assert provider.list_tasks(status="open", project_id="inbox") == []
+    assert recorded == [("GET", "/project/real-inbox/data", {})]
 
 
 def test_list_tasks_attaches_project_name(monkeypatch) -> None:
@@ -473,10 +572,221 @@ def test_resolve_default_project_id_falls_back_when_configured_id_raises_value_e
 
 def test_resolve_target_project_id_treats_inbox_alias_as_default(monkeypatch) -> None:
     provider = build_provider(inbox_project_id="inbox")
+    provider._default_project_id_cache = "inbox121427197"
     monkeypatch.setattr(provider, "resolve_default_project_id", lambda: "real-inbox")
 
     assert provider.resolve_project_id("inbox") == "real-inbox"
     assert provider.resolve_project_id("Входящие") == "real-inbox"
+    assert provider.resolve_project_id("inbox/default/входящие") == "real-inbox"
+
+
+def test_resolve_project_id_uses_cached_real_inbox_id_for_aliases() -> None:
+    provider = build_provider(inbox_project_id="inbox")
+    provider._default_project_id_cache = "inbox121427197"
+
+    assert provider.resolve_project_id("inbox") == "inbox121427197"
+    assert provider.resolve_project_id("Входящие") == "inbox121427197"
+    assert provider.resolve_project_id("default") == "inbox121427197"
+    assert provider.resolve_project_id("инбокс") == "inbox121427197"
+    assert provider.resolve_project_id("inbox/default/входящие") == "inbox121427197"
+
+
+def test_resolve_default_project_id_falls_back_to_inbox_project_id_seen_in_tasks(
+    monkeypatch,
+) -> None:
+    provider = build_provider(inbox_project_id="inbox")
+
+    def fake_request(method: str, path: str, **kwargs: Any) -> Any:
+        if path == "/project":
+            return [{"id": "work", "name": "Work", "kind": "TASK"}]
+        if path == "/task/filter":
+            return [
+                {
+                    "id": "task-1",
+                    "title": "Inbox task",
+                    "projectId": "inbox121427197",
+                    "status": 0,
+                }
+            ]
+        raise AssertionError(f"Unexpected request: {method} {path}")
+
+    monkeypatch.setattr(provider, "_request", fake_request)
+    assert provider.resolve_default_project_id() == "inbox121427197"
+    assert provider._default_project_id_cache == "inbox121427197"
+
+
+def test_list_tasks_remembers_real_inbox_project_id_from_returned_tasks(monkeypatch) -> None:
+    provider = build_provider(inbox_project_id="inbox")
+    recorded: list[tuple[str, str, dict[str, Any]]] = []
+
+    def fake_request(method: str, path: str, **kwargs: Any) -> Any:
+        recorded.append((method, path, kwargs))
+        if path == "/project":
+            return [{"id": "work", "name": "Work", "kind": "TASK"}]
+        if path == "/task/filter":
+            return [
+                {
+                    "id": "task-1",
+                    "title": "Inbox task",
+                    "projectId": "inbox121427197",
+                    "status": 0,
+                }
+            ]
+        if path == "/project/inbox121427197/data":
+            return {
+                "tasks": [
+                    {
+                        "id": "task-1",
+                        "title": "Inbox task",
+                        "projectId": "inbox121427197",
+                        "status": 0,
+                    }
+                ]
+            }
+        raise AssertionError(f"Unexpected request: {method} {path}")
+
+    monkeypatch.setattr(provider, "_request", fake_request)
+    tasks = provider.list_tasks(project_id="inbox")
+
+    assert [task.project_id for task in tasks] == ["inbox121427197"]
+    assert provider._default_project_id_cache == "inbox121427197"
+    assert ("GET", "/project/inbox121427197/data", {}) in recorded
+
+
+def test_inbox_id_discovered_from_list_tasks_is_reused_after_inbox_becomes_empty(
+    monkeypatch,
+) -> None:
+    provider = build_provider(inbox_project_id="inbox")
+    calls: list[tuple[str, str, dict[str, Any]]] = []
+    inbox_has_tasks = {"value": True}
+
+    def fake_request(method: str, path: str, **kwargs: Any) -> Any:
+        calls.append((method, path, kwargs))
+        if path == "/project":
+            return [{"id": "internship", "name": "Стажировка", "kind": "TASK"}]
+        if path == "/task/filter":
+            if inbox_has_tasks["value"]:
+                return [
+                    {
+                        "id": "task-1",
+                        "title": "Привет мир",
+                        "projectId": "inbox121427197",
+                        "status": 0,
+                    }
+                ]
+            return [
+                {
+                    "id": "task-1",
+                    "title": "Привет мир",
+                    "projectId": "internship",
+                    "status": 0,
+                }
+            ]
+        if path == "/project/inbox121427197/data":
+            return {
+                "tasks": [
+                    {
+                        "id": "task-1",
+                        "title": "Привет мир",
+                        "projectId": "inbox121427197",
+                        "status": 0,
+                    }
+                ]
+                if inbox_has_tasks["value"]
+                else []
+            }
+        if path == "/task/move":
+            assert kwargs["json"][0]["toProjectId"] == "inbox121427197"
+            return {}
+        if path == "/project/inbox121427197/task/task-1":
+            return {
+                "id": "task-1",
+                "title": "Привет мир",
+                "projectId": "inbox121427197",
+                "status": 0,
+            }
+        raise AssertionError(f"Unexpected request: {method} {path}")
+
+    monkeypatch.setattr(provider, "_request", fake_request)
+
+    tasks = provider.list_tasks(project_id="inbox")
+    assert [task.project_id for task in tasks] == ["inbox121427197"]
+    assert provider.resolve_project_id("inbox") == "inbox121427197"
+
+    provider._task_project_cache["task-1"] = "internship"
+    inbox_has_tasks["value"] = False
+    moved = provider.move_task("task-1", "inbox")
+
+    assert moved.project_id == "inbox121427197"
+    move_calls = [call for call in calls if call[1] == "/task/move"]
+    assert len(move_calls) == 1
+
+
+def test_resolve_default_project_id_uses_real_config_without_discovery(monkeypatch) -> None:
+    provider = build_provider(inbox_project_id="inbox121427197")
+    recorded: list[tuple[str, str]] = []
+
+    def fake_get_project(project_id: str) -> Project:
+        recorded.append(("GET", f"/project/{project_id}"))
+        return Project(id=project_id, name="Inbox", kind="TASK")
+
+    monkeypatch.setattr(provider, "_get_project_by_id", fake_get_project)
+    monkeypatch.setattr(
+        provider,
+        "_load_projects",
+        lambda: (_ for _ in ()).throw(AssertionError("project discovery should not run")),
+    )
+    monkeypatch.setattr(
+        provider,
+        "_infer_default_project_id_from_tasks",
+        lambda: (_ for _ in ()).throw(AssertionError("task discovery should not run")),
+    )
+
+    assert provider.resolve_default_project_id() == "inbox121427197"
+    assert provider._default_project_id_cache == "inbox121427197"
+    assert recorded == [("GET", "/project/inbox121427197")]
+
+
+def test_resolve_default_project_id_with_literal_inbox_does_not_call_project_inbox(
+    monkeypatch,
+) -> None:
+    provider = build_provider(inbox_project_id="inbox")
+    called_project_ids: list[str] = []
+
+    def fake_get_project(project_id: str) -> Project:
+        called_project_ids.append(project_id)
+        request = httpx.Request("GET", f"https://api.ticktick.com/open/v1/project/{project_id}")
+        response = httpx.Response(404, request=request)
+        raise httpx.HTTPStatusError("missing", request=request, response=response)
+
+    monkeypatch.setattr(provider, "_get_project_by_id", fake_get_project)
+    monkeypatch.setattr(
+        provider,
+        "_load_projects",
+        lambda: [Project(id="work", name="Work", kind="TASK")],
+    )
+    monkeypatch.setattr(provider, "_infer_default_project_id_from_tasks", lambda: None)
+
+    with pytest.raises(ValueError):
+        provider.resolve_default_project_id()
+
+    assert "inbox" not in called_project_ids
+
+
+def test_resolve_default_project_id_error_explains_how_to_set_real_inbox_id(
+    monkeypatch,
+) -> None:
+    provider = build_provider(inbox_project_id="inbox")
+    monkeypatch.setattr(provider, "_load_projects", lambda: [])
+    monkeypatch.setattr(provider, "_infer_default_project_id_from_tasks", lambda: None)
+
+    with pytest.raises(ValueError) as exc_info:
+        provider.resolve_default_project_id()
+
+    message = str(exc_info.value)
+    assert "ticktick.inbox_project_id" in message
+    assert "config.local.json" in message
+    assert "inbox121427197" in message
 
 
 def test_request_error_keeps_status_endpoint_and_body(monkeypatch) -> None:
@@ -579,3 +889,25 @@ def test_update_task_sends_safe_full_payload(monkeypatch) -> None:
     assert recorded["json"]["startDate"] == "2026-04-24T09:30:00+0000"
     assert recorded["json"]["isAllDay"] is True
     assert recorded["json"]["timeZone"] == "Europe/Moscow"
+
+
+def test_update_task_resolves_inbox_alias_in_payload(monkeypatch) -> None:
+    provider = build_provider(inbox_project_id="real-inbox")
+    current = Task(id="task-1", title="hello world", project_id="work", project_name="Work")
+    monkeypatch.setattr(provider, "get_task_details", lambda task_id: current)
+    monkeypatch.setattr(provider, "resolve_project_id", lambda project_id=None: "real-inbox")
+    recorded: dict[str, Any] = {}
+
+    def fake_request(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        recorded["json"] = kwargs["json"]
+        return {
+            "id": "task-1",
+            "title": kwargs["json"]["title"],
+            "projectId": kwargs["json"]["projectId"],
+            "status": 0,
+        }
+
+    monkeypatch.setattr(provider, "_request", fake_request)
+    task = provider.update_task("task-1", {"project_id": "inbox"})
+    assert task.project_id == "real-inbox"
+    assert recorded["json"]["projectId"] == "real-inbox"

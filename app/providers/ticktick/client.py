@@ -8,12 +8,14 @@ import httpx
 
 from app.domain.models import Project, Task, TickTickCredentials
 from app.providers.ticktick.base import TickTickProvider
+from app.providers.ticktick.project_refs import (
+    is_default_project_alias as normalize_default_project_alias,
+)
+from app.providers.ticktick.project_refs import normalize_project_ref
 from app.utils.timezone import configured_timezone_name, resolve_timezone, timezone_label
 
 
 class TickTickApiProvider(TickTickProvider):
-    DEFAULT_PROJECT_ALIASES = {"inbox", "default", "входящие"}
-
     def __init__(
         self,
         credentials: TickTickCredentials,
@@ -25,6 +27,7 @@ class TickTickApiProvider(TickTickProvider):
         self.client = self._build_client()
         self._task_project_cache: dict[str, str] = {}
         self._projects_cache: dict[str, Project] = {}
+        self._default_project_id_cache: str | None = None
 
     def _build_client(self) -> httpx.Client:
         return httpx.Client(
@@ -136,6 +139,7 @@ class TickTickApiProvider(TickTickProvider):
 
     def _remember_task(self, task: Task) -> Task:
         self._task_project_cache[task.id] = task.project_id
+        self.remember_default_project_id(task.project_id)
         return task
 
     def _project_name_for(self, project_id: str) -> Optional[str]:
@@ -170,62 +174,128 @@ class TickTickApiProvider(TickTickProvider):
         items = payload if isinstance(payload, list) else []
         projects = [project for item in items if (project := self._parse_project(item)) is not None]
         self._projects_cache = {project.id: project for project in projects}
+        for project in projects:
+            if self._looks_like_default_project_id(project.id) or self.is_default_project_alias(
+                project.name
+            ):
+                self.remember_default_project_id(project.id)
         return projects
+
+    @staticmethod
+    def _looks_like_default_project_id(project_id: Optional[str]) -> bool:
+        normalized = (project_id or "").strip().casefold()
+        return normalized.startswith("inbox")
+
+    def remember_default_project_id(self, project_id: Optional[str]) -> None:
+        if self._looks_like_default_project_id(project_id):
+            resolved = str(project_id).strip()
+            self._default_project_id_cache = resolved
+            self.credentials.inbox_project_id = resolved
+
+    def _infer_default_project_id_from_tasks(self) -> Optional[str]:
+        try:
+            payload = self._request("POST", "/task/filter", json={"status": [0]})
+        except Exception:
+            return None
+        items = payload if isinstance(payload, list) else []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            project_id = str(item.get("projectId") or item.get("project_id") or "").strip()
+            project_name = str(item.get("projectName") or item.get("project_name") or "").strip()
+            if self._looks_like_default_project_id(project_id) or self.is_default_project_alias(
+                project_name
+            ):
+                self.remember_default_project_id(project_id)
+                return project_id
+        return None
 
     def _get_project_by_id(self, project_id: str) -> Project:
         if project_id in self._projects_cache:
             return self._projects_cache[project_id]
         project = Project.model_validate(self._request("GET", f"/project/{project_id}"))
         self._projects_cache[project.id] = project
+        if self._looks_like_default_project_id(project.id) or self.is_default_project_alias(
+            project.name
+        ):
+            self.remember_default_project_id(project.id)
         return project
 
     def _validated_project_id(self, project_id: str) -> str:
         self._get_project_by_id(project_id)
         return project_id
 
+    def normalize_project_ref(self, project_ref: Optional[str] = None) -> Optional[str]:
+        return normalize_project_ref(project_ref)
+
     def is_default_project_alias(self, value: str) -> bool:
-        return value.strip().lower() in self.DEFAULT_PROJECT_ALIASES
+        return normalize_default_project_alias(value)
+
+    def _configured_default_project_id(self) -> Optional[str]:
+        configured = self.normalize_project_ref(self.credentials.inbox_project_id)
+        if not configured or self.is_default_project_alias(configured):
+            return None
+        try:
+            resolved = self._validated_project_id(configured)
+        except Exception:
+            return None
+        self.remember_default_project_id(resolved)
+        return resolved
+
+    def _infer_default_project_id_from_projects(
+        self, projects: list[Project], configured: Optional[str] = None
+    ) -> Optional[str]:
+        if configured:
+            lowered = configured.casefold()
+            for project in projects:
+                if project.id.casefold() == lowered or project.name.casefold() == lowered:
+                    self.remember_default_project_id(project.id)
+                    return project.id
+        for alias in {"inbox", "входящие", "инбокс"}:
+            for project in projects:
+                if project.name.casefold() == alias:
+                    self.remember_default_project_id(project.id)
+                    return project.id
+        return None
 
     def resolve_default_project_id(self) -> str:
-        configured = (self.credentials.inbox_project_id or "").strip()
-        if configured:
-            try:
-                if not self.is_default_project_alias(configured):
-                    return self._validated_project_id(configured)
-            except ValueError:
-                pass
+        if self._default_project_id_cache:
+            return self._default_project_id_cache
+
+        configured = self.normalize_project_ref(self.credentials.inbox_project_id)
+        configured_real_id = self._configured_default_project_id()
+        if configured_real_id:
+            return configured_real_id
 
         projects = self._load_projects()
-        if configured:
-            lowered = configured.lower()
-            for project in projects:
-                if project.id.lower() == lowered or project.name.lower() == lowered:
-                    return project.id
-        for alias in self.DEFAULT_PROJECT_ALIASES:
-            for project in projects:
-                if project.name.lower() == alias:
-                    return project.id
-        for project in projects:
-            if project.kind == "TASK":
-                return project.id
-        if projects:
-            return projects[0].id
+        inferred_from_projects = self._infer_default_project_id_from_projects(projects, configured)
+        if inferred_from_projects:
+            return inferred_from_projects
+        inferred = self._infer_default_project_id_from_tasks()
+        if inferred:
+            self.remember_default_project_id(inferred)
+            return inferred
         raise ValueError(
-            "Не удалось определить project_id для новой задачи: не найден доступный inbox/default project."
+            "Не удалось определить real project_id для Inbox. Укажите ticktick.inbox_project_id "
+            'в config.local.json, например "inbox121427197". Literal alias "inbox" подходит '
+            "только для tool calls, но не для TickTick API."
         )
 
     def resolve_project_id(self, project_ref: Optional[str] = None) -> str:
-        target = (project_ref or "").strip()
+        target = self.normalize_project_ref(project_ref) or ""
         if not target or self.is_default_project_alias(target):
             return self.resolve_default_project_id()
         try:
-            return self._validated_project_id(target)
+            resolved = self._validated_project_id(target)
+            self.remember_default_project_id(resolved)
+            return resolved
         except ValueError:
             pass
         projects = self._load_projects()
-        lowered = target.lower()
-        matches = [project for project in projects if project.name.lower() == lowered]
+        lowered = target.casefold()
+        matches = [project for project in projects if project.name.casefold() == lowered]
         if len(matches) == 1:
+            self.remember_default_project_id(matches[0].id)
             return matches[0].id
         if matches:
             raise ValueError(f"Проект '{target}' неоднозначен, используйте точный project_id.")
@@ -383,14 +453,17 @@ class TickTickApiProvider(TickTickProvider):
     ) -> list[Task]:
         normalized_status = self._normalize_status_filter(status)
         tasks_payload: list[dict[str, Any]]
+        resolved_project_id = self.resolve_project_id(project_id) if project_id else None
 
         if normalized_status == "completed":
             payload: dict[str, Any] = {}
-            if project_id:
-                payload["projectIds"] = [project_id]
+            if resolved_project_id:
+                payload["projectIds"] = [resolved_project_id]
             tasks_payload = self._request("POST", "/task/completed", json=payload)
-        elif project_id:
-            tasks_payload = self._request("GET", f"/project/{project_id}/data").get("tasks", [])
+        elif resolved_project_id:
+            tasks_payload = self._request("GET", f"/project/{resolved_project_id}/data").get(
+                "tasks", []
+            )
         else:
             payload = {"status": [0]}
             tasks_payload = self._request("POST", "/task/filter", json=payload)
@@ -458,6 +531,10 @@ class TickTickApiProvider(TickTickProvider):
     def update_task(self, task_id: str, fields: dict[str, object]) -> Task:
         current = self.get_task_details(task_id)
         normalized_fields = self._normalize_update_fields(fields)
+        if "projectId" in normalized_fields:
+            normalized_fields["projectId"] = self.resolve_project_id(
+                str(normalized_fields["projectId"])
+            )
         merged_task = current.model_copy(
             update={
                 "project_id": normalized_fields.get("projectId", current.project_id),
@@ -476,21 +553,37 @@ class TickTickApiProvider(TickTickProvider):
 
     def list_projects(self) -> list[Project]:
         projects = self._load_projects()
-        configured = (self.credentials.inbox_project_id or "").strip()
+        project_ids = {project.id for project in projects}
+        try:
+            inbox_project_id = self.resolve_default_project_id()
+        except ValueError:
+            inbox_project_id = None
+
+        if inbox_project_id and inbox_project_id not in project_ids:
+            try:
+                configured_project = self._get_project_by_id(inbox_project_id)
+                inbox_project = configured_project.model_copy(update={"name": "Inbox"})
+            except Exception:
+                inbox_project = Project(id=inbox_project_id, name="Inbox", kind="TASK")
+            projects.append(inbox_project)
+            project_ids.add(inbox_project.id)
+
+        configured = self.normalize_project_ref(self.credentials.inbox_project_id)
         if (
             configured
             and not self.is_default_project_alias(configured)
-            and configured not in {project.id for project in projects}
+            and configured not in project_ids
         ):
             try:
                 configured_project = self._get_project_by_id(configured)
-                if configured_project.id not in {project.id for project in projects}:
+                if configured_project.id not in project_ids:
                     projects.append(configured_project)
             except Exception:
                 projects.append(Project(id=configured, name="Inbox (configured)", kind="TASK"))
         return projects
 
     def move_task(self, task_id: str, project_id: str) -> Task:
+        resolved_project_id = self.resolve_project_id(project_id)
         current_project_id = self._task_project_cache.get(task_id)
         if not current_project_id:
             current_project_id = self.get_task_details(task_id).project_id
@@ -500,13 +593,13 @@ class TickTickApiProvider(TickTickProvider):
             json=[
                 {
                     "fromProjectId": current_project_id,
-                    "toProjectId": project_id,
+                    "toProjectId": resolved_project_id,
                     "taskId": task_id,
                 }
             ],
         )
-        self._task_project_cache[task_id] = project_id
-        return self._get_task_details(task_id, project_id=project_id)
+        self._task_project_cache[task_id] = resolved_project_id
+        return self._get_task_details(task_id, project_id=resolved_project_id)
 
     def mark_complete(self, task_id: str) -> Task:
         current = self.get_task_details(task_id)

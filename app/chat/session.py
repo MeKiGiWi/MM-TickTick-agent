@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
@@ -9,6 +11,7 @@ from app.chat.prompts import SYSTEM_PROMPT
 from app.config.setup import ensure_config
 from app.llm.openrouter import OpenRouterClient, OpenRouterToolLoop
 from app.services.provider_factory import build_ticktick_provider
+from app.storage.config_store import ConfigStore
 from app.tools.registry import ToolRegistry
 from app.utils.timezone import resolve_timezone, timezone_label
 
@@ -17,9 +20,11 @@ class ChatSession:
     RUNTIME_CONTEXT_PREFIX = "Runtime context:"
     USER_PROMPT = "🙂 you> "
     AGENT_PROMPT = "🤖 agent> "
+    SYSTEM_INFO_PROMPT = "ℹ️ system> "
 
     def __init__(self, root: Optional[Path] = None) -> None:
         self.root = root or Path(__file__).resolve().parents[2]
+        self.config_store = ConfigStore(self.root)
         self.config = ensure_config(self.root)
         self.provider = build_ticktick_provider(
             self.config.ticktick,
@@ -32,6 +37,7 @@ class ChatSession:
             self.registry,
             max_tool_steps=self.config.openrouter.max_tool_steps,
         )
+        self.debug_tool_flow = os.getenv("DEBUG_TOOL_FLOW", "1") != "0"
         self.messages: list[dict[str, object]] = [{"role": "system", "content": SYSTEM_PROMPT}]
 
     @classmethod
@@ -113,6 +119,75 @@ class ChatSession:
         print(self._format_projects_output(projects))
         return True
 
+    @staticmethod
+    def _pretty_json(value: Any) -> str:
+        try:
+            return json.dumps(value, ensure_ascii=False, indent=2)
+        except TypeError:
+            return str(value)
+
+    @classmethod
+    def _extract_tool_debug_lines(
+        cls,
+        previous_messages: list[dict[str, object]],
+        updated_messages: list[dict[str, object]],
+    ) -> list[str]:
+        new_messages = updated_messages[len(previous_messages) :]
+        lines: list[str] = []
+        for message in new_messages:
+            if message.get("role") == "assistant":
+                for tool_call in message.get("tool_calls", []) or []:
+                    function = tool_call.get("function", {})
+                    name = function.get("name", "unknown")
+                    arguments = function.get("arguments", "{}")
+                    try:
+                        parsed_arguments = json.loads(arguments)
+                    except Exception:
+                        parsed_arguments = arguments
+                    lines.append(f"tool call: {name}")
+                    lines.append(cls._pretty_json(parsed_arguments))
+            elif message.get("role") == "tool":
+                lines.append(f"tool result: {message.get('name', 'unknown')}")
+                content = message.get("content", "")
+                try:
+                    parsed_content = json.loads(content) if isinstance(content, str) else content
+                except Exception:
+                    parsed_content = content
+                lines.append(cls._pretty_json(parsed_content))
+        return lines
+
+    def _print_tool_debug_info(
+        self,
+        previous_messages: list[dict[str, object]],
+        updated_messages: list[dict[str, object]],
+    ) -> None:
+        if not getattr(self, "debug_tool_flow", True):
+            return
+        lines = self._extract_tool_debug_lines(previous_messages, updated_messages)
+        if not lines:
+            return
+        print()
+        print(f"{self.SYSTEM_INFO_PROMPT}tool flow")
+        for line in lines:
+            print(line)
+
+    def _persist_config_if_needed(self) -> None:
+        ticktick_config = getattr(self.config, "ticktick", None)
+        if ticktick_config is None or getattr(ticktick_config, "provider", None) != "ticktick":
+            return
+        inbox_project_id = getattr(ticktick_config, "inbox_project_id", "")
+        if not isinstance(inbox_project_id, str) or not inbox_project_id.casefold().startswith(
+            "inbox"
+        ):
+            return
+        config_store = getattr(self, "config_store", None)
+        if config_store is None or not config_store.exists():
+            return
+        stored = config_store.load()
+        if stored.ticktick.inbox_project_id == inbox_project_id:
+            return
+        config_store.save(self.config)
+
     def run(self) -> None:
         print("TickTick chat agent запущен. Напишите сообщение. Для выхода: exit")
         while True:
@@ -125,6 +200,7 @@ class ChatSession:
             if self._handle_local_command(user_input):
                 continue
             self.messages.append({"role": "user", "content": user_input})
+            previous_messages = list(self.messages)
             try:
                 self.messages = self._upsert_runtime_context(
                     self.messages,
@@ -136,8 +212,10 @@ class ChatSession:
                 answer = self._format_turn_error(exc)
                 updated_messages = self.messages + [{"role": "assistant", "content": answer}]
             self.messages = updated_messages
+            self._persist_config_if_needed()
             answer = answer.strip()
             if not answer:
                 answer = "Не получил текстовый ответ от модели."
+            self._print_tool_debug_info(previous_messages, updated_messages)
             print()
             print(f"{self.AGENT_PROMPT}{answer}")

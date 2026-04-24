@@ -3,7 +3,7 @@
   "tools": [
     {
       "name": "create_task",
-      "description": "Creates one TickTick task in a project. Omit project_id to use the configured default project.",
+      "description": "Creates one TickTick task in a project. Omit project_id to create the task in Inbox. For Inbox use exactly project_id=\"inbox\".",
       "parameters": {
         "type": "object",
         "properties": {
@@ -13,7 +13,7 @@
           },
           "project_id": {
             "type": "string",
-            "description": "Optional project reference. May be a real project id, a project name, or a default-project alias such as inbox/default/входящие."
+            "description": "Optional project reference. For Inbox use exactly \"inbox\". For other projects use a real project id or exact project name. Do not pass \"inbox/default/входящие\"."
           },
           "content": {
             "type": "string",
@@ -64,7 +64,7 @@
           },
           "project_id": {
             "type": "string",
-            "description": "Optional project reference for the parent task. Omit to use the configured default project."
+            "description": "Optional project reference for the parent task. For Inbox use exactly \"inbox\". For other projects use a real project id or exact project name. Omit to create the parent task in Inbox. Do not pass \"inbox/default/входящие\"."
           },
           "content": {
             "type": "string",
@@ -98,7 +98,7 @@
     },
     {
       "name": "list_tasks",
-      "description": "Lists TickTick tasks and can filter by status, project, or search text.",
+      "description": "Lists TickTick tasks and can filter by status, project, or search text. Use this first when you need to find a task and obtain its real task_id before calling tools that require task_id. To list Inbox tasks, call list_tasks with project_id=\"inbox\".",
       "parameters": {
         "type": "object",
         "properties": {
@@ -109,11 +109,11 @@
           },
           "project_id": {
             "type": "string",
-            "description": "Optional project reference to limit the task list."
+            "description": "Optional project reference to limit the task list. For Inbox use exactly \"inbox\". For other projects use a real project id or exact project name. Do not pass \"inbox/default/входящие\"."
           },
           "search": {
             "type": "string",
-            "description": "Optional case-insensitive search matched against task title and notes."
+            "description": "Optional case-insensitive search matched against task title and notes. Use this to find the task before calling tools that require task_id."
           }
         },
         "additionalProperties": false
@@ -121,13 +121,13 @@
     },
     {
       "name": "get_task_details",
-      "description": "Gets one TickTick task with its current fields.",
+      "description": "Gets one TickTick task with its current fields. Requires a real task_id. Never pass a task title in task_id. If you only know the title, first call list_tasks or update_task_by_search to find the task and extract its real id.",
       "parameters": {
         "type": "object",
         "properties": {
           "task_id": {
             "type": "string",
-            "description": "Task identifier."
+            "description": "Real TickTick task_id only. Never put a task title here."
           }
         },
         "required": ["task_id"],
@@ -136,13 +136,13 @@
     },
     {
       "name": "create_subtasks",
-      "description": "Creates subtasks under an existing parent task. The backend resolves the parent's project automatically.",
+      "description": "Creates subtasks under an existing parent task. Requires the real parent task_id. Never pass a task title in task_id. If you only know the title, first call list_tasks to find the parent task and extract its real id. The backend resolves the parent's project automatically.",
       "parameters": {
         "type": "object",
         "properties": {
           "task_id": {
             "type": "string",
-            "description": "Parent task identifier."
+            "description": "Real parent task_id only. Never put a task title here."
           },
           "titles": {
             "type": "array",
@@ -158,13 +158,13 @@
     },
     {
       "name": "update_task",
-      "description": "Updates editable fields of one TickTick task.",
+      "description": "Updates editable fields of one TickTick task. Requires a real task_id. Never pass a task title in task_id. If you only know the task by name, first find its id via list_tasks or use update_task_by_search.",
       "parameters": {
         "type": "object",
         "properties": {
           "task_id": {
             "type": "string",
-            "description": "Task identifier."
+            "description": "Real TickTick task_id only. Never put a task title here."
           },
           "title": {
             "type": "string",
@@ -202,7 +202,7 @@
           },
           "project_id": {
             "type": "string",
-            "description": "Optional target project reference if the task should move."
+            "description": "Optional target project reference if the task should move. For Inbox use exactly \"inbox\". For other projects use a real project id or exact project name. Do not pass \"inbox/default/входящие\"."
           }
         },
         "required": ["task_id"],
@@ -211,13 +211,13 @@
     },
     {
       "name": "update_task_by_search",
-      "description": "Finds one open task by text and updates it only when the match is reliable.",
+      "description": "Finds one open task by text and updates it only when the match is reliable. Use this when the user names a task but you do not yet know its real task_id. project_id is the target project for moving the matched task; search_project_id only limits where to search.",
       "parameters": {
         "type": "object",
         "properties": {
           "search": {
             "type": "string",
-            "description": "Search text used to find the task by title or notes."
+            "description": "Search text used to find the task by title or notes when task_id is not known yet."
           },
           "title": {
             "type": "string",
@@ -255,7 +255,11 @@
           },
           "project_id": {
             "type": "string",
-            "description": "Optional project reference used as a search scope or move target."
+            "description": "Optional target project reference if the matched task should move. For Inbox use exactly \"inbox\". For other projects use a real project id or exact project name. Do not pass \"inbox/default/входящие\"."
+          },
+          "search_project_id": {
+            "type": "string",
+            "description": "Optional project reference that only limits where to search for the task. For Inbox use exactly \"inbox\". For other projects use a real project id or exact project name. Do not pass \"inbox/default/входящие\"."
           },
           "prefer_due_date": {
             "type": "string",
@@ -277,7 +281,7 @@
     },
     {
       "name": "list_projects",
-      "description": "Lists TickTick projects and can filter them by id or name.",
+      "description": "Lists TickTick projects and can filter them by id or name. Inbox is a special default project and should appear as project_id \"inbox\" to the model, while the backend resolves its real TickTick id.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -317,7 +321,7 @@
           },
           "project_id": {
             "type": "string",
-            "description": "Optional project reference to limit the list."
+            "description": "Optional project reference to limit the list. For Inbox use exactly \"inbox\". For other projects use a real project id or exact project name. Do not pass \"inbox/default/входящие\"."
           }
         },
         "additionalProperties": false
@@ -325,17 +329,17 @@
     },
     {
       "name": "move_task",
-      "description": "Moves one task to another project.",
+      "description": "Moves one task to another project. Requires a real task_id. Never pass a task title in task_id. If you only know the task by name, first call list_tasks to find the task and extract its real id. To move to Inbox, call move_task with project_id=\"inbox\".",
       "parameters": {
         "type": "object",
         "properties": {
           "task_id": {
             "type": "string",
-            "description": "Task identifier."
+            "description": "Real TickTick task_id only. Never put a task title here."
           },
           "project_id": {
             "type": "string",
-            "description": "Destination project reference."
+            "description": "Destination project reference. For Inbox use exactly \"inbox\". For other projects use a real project id or exact project name. Do not pass \"inbox/default/входящие\"."
           }
         },
         "required": ["task_id", "project_id"],
@@ -344,13 +348,13 @@
     },
     {
       "name": "mark_complete",
-      "description": "Marks one task as completed.",
+      "description": "Marks one task as completed. Requires a real task_id. Never pass a task title in task_id. If you only know the task by name, first call list_tasks to find the task and extract its real id.",
       "parameters": {
         "type": "object",
         "properties": {
           "task_id": {
             "type": "string",
-            "description": "Task identifier."
+            "description": "Real TickTick task_id only. Never put a task title here."
           }
         },
         "required": ["task_id"],

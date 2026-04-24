@@ -49,11 +49,21 @@ class ToolPresenter:
         return item
 
     @staticmethod
+    def _format_user_facing_error(message: str) -> str:
+        lowered = message.casefold()
+        if "real project_id для inbox" in lowered:
+            return (
+                "Не удалось выполнить действие с Inbox: TickTick API не вернул реальный "
+                "идентификатор Inbox. Это проблема интеграции, а не вашего запроса."
+            )
+        return message
+
+    @staticmethod
     def tool_error(name: str, exc: Exception) -> dict[str, Any]:
         return {
             "error": {
                 "tool": name,
-                "message": str(exc),
+                "message": ToolPresenter._format_user_facing_error(str(exc)),
             }
         }
 

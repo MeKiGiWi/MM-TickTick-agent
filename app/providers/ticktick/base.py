@@ -8,6 +8,10 @@ from app.domain.models import Project, Task
 
 class TickTickProvider(ABC):
     @abstractmethod
+    def normalize_project_ref(self, project_ref: Optional[str] = None) -> Optional[str]:
+        raise NotImplementedError
+
+    @abstractmethod
     def resolve_project_id(self, project_ref: Optional[str] = None) -> str:
         raise NotImplementedError
 
@@ -17,6 +21,10 @@ class TickTickProvider(ABC):
 
     @abstractmethod
     def is_default_project_alias(self, value: str) -> bool:
+        raise NotImplementedError
+
+    @abstractmethod
+    def remember_default_project_id(self, project_id: Optional[str]) -> None:
         raise NotImplementedError
 
     @abstractmethod

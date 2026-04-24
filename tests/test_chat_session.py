@@ -169,3 +169,56 @@ def test_chat_session_formats_network_like_turn_errors() -> None:
     )
     assert "временной сетевой ошибки" in message
     assert "DNS" in message
+
+
+def test_chat_session_prints_tool_debug_info_when_enabled(capsys) -> None:
+    previous_messages = [
+        {"role": "system", "content": "base"},
+        {"role": "user", "content": "создай задачу"},
+    ]
+    updated_messages = previous_messages + [
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call-1",
+                    "type": "function",
+                    "function": {
+                        "name": "create_task",
+                        "arguments": '{"title":"Привет мир"}',
+                    },
+                }
+            ],
+        },
+        {
+            "role": "tool",
+            "name": "create_task",
+            "tool_call_id": "call-1",
+            "content": '{"id":"task-1","title":"Привет мир"}',
+        },
+    ]
+    session = ChatSession.__new__(ChatSession)
+    session.debug_tool_flow = True
+
+    session._print_tool_debug_info(previous_messages, updated_messages)
+
+    output = capsys.readouterr().out
+    assert "ℹ️ system> tool flow" in output
+    assert "tool call: create_task" in output
+    assert '"title": "Привет мир"' in output
+    assert "tool result: create_task" in output
+    assert '"id": "task-1"' in output
+
+
+def test_chat_session_does_not_print_tool_debug_info_when_disabled(capsys) -> None:
+    session = ChatSession.__new__(ChatSession)
+    session.debug_tool_flow = False
+
+    session._print_tool_debug_info(
+        [{"role": "user", "content": "x"}],
+        [{"role": "user", "content": "x"}],
+    )
+
+    output = capsys.readouterr().out
+    assert output == ""

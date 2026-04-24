@@ -86,7 +86,7 @@ class ToolHandlers:
             prefer_due_date=prefer_due_date,
             prefer_today=prefer_today,
             exact_title=exact_title,
-            project_id=payload.get("project_id"),
+            search_project_id=payload.get("search_project_id"),
         )
 
     def list_projects(self, query: Optional[str] = None, **_: Any) -> list[Any]:

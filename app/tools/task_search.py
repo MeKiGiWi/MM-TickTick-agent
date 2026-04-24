@@ -18,16 +18,23 @@ class TaskSearch:
         self.presenter = presenter
         self.now_provider = now_provider
 
-    @staticmethod
-    def project_matches_query(item: Any, query: Optional[str]) -> bool:
+    def project_matches_query(self, item: Any, query: Optional[str]) -> bool:
         if not query:
             return True
-        lowered = query.lower()
+        lowered = query.casefold()
         payload = ToolPresenter.dump_item(item)
         if not isinstance(payload, dict):
             return False
-        name = str(payload.get("name") or "").lower()
-        project_id = str(payload.get("id") or "").lower()
+        name = str(payload.get("name") or "")
+        project_id = str(payload.get("id") or "")
+        if self.provider.is_default_project_alias(query) and (
+            self.provider.is_default_project_alias(name)
+            or self.provider.is_default_project_alias(project_id)
+            or name.casefold() == "inbox"
+        ):
+            return True
+        name = name.casefold()
+        project_id = project_id.casefold()
         return lowered in name or lowered in project_id
 
     @staticmethod
@@ -54,16 +61,20 @@ class TaskSearch:
         prefer_due_date: Optional[str] = None,
         prefer_today: bool = False,
         exact_title: bool = False,
-        project_id: Optional[str] = None,
+        search_project_id: Optional[str] = None,
     ) -> Any:
-        tasks = self.provider.list_tasks(status="normal", search=search, project_id=project_id)
+        tasks = self.provider.list_tasks(
+            status="normal",
+            search=search,
+            project_id=search_project_id,
+        )
         payloads = [self.presenter.present(task) for task in tasks]
-        normalized_search = search.strip().lower()
+        normalized_search = search.strip().casefold()
         if exact_title:
             exact_matches = [
                 item
                 for item in payloads
-                if str(item.get("title") or "").strip().lower() == normalized_search
+                if str(item.get("title") or "").strip().casefold() == normalized_search
             ]
             if exact_matches:
                 payloads = exact_matches

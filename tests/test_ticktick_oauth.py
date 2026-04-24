@@ -129,7 +129,6 @@ def test_ensure_config_runs_oauth_for_ticktick(monkeypatch, tmp_path) -> None:
             "client-secret",
             "https://example.com/callback",
             "tasks:write tasks:read",
-            "inbox",
         ]
     )
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
@@ -157,7 +156,6 @@ def test_ensure_config_prompts_for_ticktick_credentials(monkeypatch, tmp_path) -
             "prompt-client-secret",
             "https://example.com/callback",
             "tasks:write tasks:read",
-            "inbox",
         ]
     )
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
