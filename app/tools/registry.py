@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import json
 from datetime import date, datetime, timedelta, tzinfo
+from pathlib import Path
 from typing import Any, Callable, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from app.domain.models import ClarifyAssessment
 from app.providers.ticktick.base import TickTickProvider
 from app.tools.base import ToolSpec
 from app.utils.timezone import resolve_timezone
@@ -32,10 +32,12 @@ class ToolRegistry:
         provider: TickTickProvider,
         user_timezone: Optional[str] = None,
         now_provider: Optional[Callable[[], datetime]] = None,
+        specs_path: Optional[Path] = None,
     ) -> None:
         self.provider = provider
         self.user_timezone = user_timezone
         self.now_provider = now_provider
+        self.specs_path = specs_path or Path(__file__).with_name("specs") / "ticktick_tools.json"
         self._tools: dict[str, ToolSpec] = {}
         self._register_defaults()
 
@@ -51,6 +53,31 @@ class ToolRegistry:
         if current.tzinfo is None:
             return current.replace(tzinfo=timezone)
         return current.astimezone(timezone)
+
+    def _load_tool_specs(self) -> list[dict[str, Any]]:
+        payload = json.loads(self.specs_path.read_text(encoding="utf-8"))
+        tools = payload.get("tools")
+        if not isinstance(tools, list):
+            raise ValueError(f"Invalid tool specs format in {self.specs_path}")
+        return tools
+
+    def _build_update_fields(self, payload: dict[str, Any]) -> dict[str, Any]:
+        editable_fields = (
+            "title",
+            "content",
+            "due_date",
+            "start_date",
+            "is_all_day",
+            "time_zone",
+            "priority",
+            "status",
+            "project_id",
+        )
+        return {
+            key: payload[key]
+            for key in editable_fields
+            if key in payload and payload[key] is not None
+        }
 
     @staticmethod
     def _task_timezone(payload: dict[str, Any], fallback: ZoneInfo | tzinfo) -> ZoneInfo | tzinfo:
@@ -169,8 +196,7 @@ class ToolRegistry:
     @staticmethod
     def _dump_item(item: Any) -> Any:
         if hasattr(item, "model_dump"):
-            payload = item.model_dump()
-            return payload
+            return item.model_dump()
         return item
 
     def _wrap_handler(self, name: str, handler: Callable[..., Any]) -> Callable[..., Any]:
@@ -241,227 +267,57 @@ class ToolRegistry:
         return result[: max(limit, 0)]
 
     def _register_defaults(self) -> None:
-        self._register(
-            ToolSpec(
-                name="create_task",
-                description=(
-                    "Create a TickTick task when the user explicitly asks to add one. "
-                    "When project_id is omitted, create the task in configured inbox/default project. "
-                    "Do not ask the user for project unless they explicitly require a specific project."
-                ),
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "title": {"type": "string"},
-                        "project_id": {"type": "string"},
-                        "content": {"type": "string"},
-                        "due_date": {"type": "string"},
-                        "start_date": {"type": "string"},
-                        "is_all_day": {"type": "boolean"},
-                        "time_zone": {"type": "string"},
-                        "priority": {"type": "integer"},
-                    },
-                    "required": ["title"],
-                },
-                handler=self._wrap_handler(
-                    "create_task",
-                    lambda title, project_id=None, content=None, due_date=None, start_date=None, is_all_day=None, time_zone=None, priority=None, **_: self.provider.create_task(
-                        title=title,
-                        project_id=project_id,
-                        content=content,
-                        due_date=due_date,
-                        start_date=start_date,
-                        is_all_day=is_all_day,
-                        time_zone=time_zone,
-                        priority=priority,
-                    ),
-                ),
+        handlers: dict[str, Callable[..., Any]] = {
+            "create_task": lambda title, project_id=None, content=None, due_date=None, start_date=None, is_all_day=None, time_zone=None, priority=None, **_: self.provider.create_task(
+                title=title,
+                project_id=project_id,
+                content=content,
+                due_date=due_date,
+                start_date=start_date,
+                is_all_day=is_all_day,
+                time_zone=time_zone,
+                priority=priority,
+            ),
+            "list_tasks": lambda **kwargs: self.provider.list_tasks(**kwargs),
+            "get_task_details": lambda task_id, **_: self.provider.get_task_details(task_id),
+            "create_subtasks": lambda task_id, titles, **_: self.provider.create_subtasks(
+                task_id=task_id,
+                titles=titles,
+            ),
+            "update_task": self._update_task,
+            "update_task_by_search": self._update_task_by_search,
+            "list_projects": self._list_projects,
+            "list_upcoming_tasks": self._list_upcoming_tasks,
+            "move_task": lambda task_id, project_id, **_: self.provider.move_task(
+                task_id=task_id,
+                project_id=project_id,
+            ),
+            "mark_complete": lambda task_id, **_: self.provider.mark_complete(task_id),
+        }
+        for spec in self._load_tool_specs():
+            name = spec["name"]
+            handler = handlers.get(name)
+            if handler is None:
+                raise ValueError(f"No handler registered for tool: {name}")
+            self._register(
+                ToolSpec(
+                    name=name,
+                    description=spec["description"],
+                    parameters=spec["parameters"],
+                    handler=self._wrap_handler(name, handler),
+                )
             )
-        )
-        self._register(
-            ToolSpec(
-                name="list_tasks",
-                description=(
-                    "List tasks by optional status, project, or search query. "
-                    "Use this for real task lookup, including search by title/content."
-                ),
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "status": {"type": "string"},
-                        "project_id": {"type": "string"},
-                        "search": {"type": "string"},
-                    },
-                },
-                handler=self._wrap_handler(
-                    "list_tasks",
-                    lambda **kwargs: self.provider.list_tasks(**kwargs),
-                ),
-            )
-        )
-        self._register(
-            ToolSpec(
-                name="get_task_details",
-                description="Get full details for one task by task_id.",
-                parameters={
-                    "type": "object",
-                    "properties": {"task_id": {"type": "string"}},
-                    "required": ["task_id"],
-                },
-                handler=self._wrap_handler(
-                    "get_task_details",
-                    lambda task_id, **_: self.provider.get_task_details(task_id),
-                ),
-            )
-        )
-        self._register(
-            ToolSpec(
-                name="create_subtasks",
-                description="Create subtasks under an existing task after the user agrees.",
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "task_id": {"type": "string"},
-                        "titles": {"type": "array", "items": {"type": "string"}},
-                    },
-                    "required": ["task_id", "titles"],
-                },
-                handler=self._wrap_handler(
-                    "create_subtasks",
-                    lambda task_id, titles, **_: self.provider.create_subtasks(
-                        task_id=task_id,
-                        titles=titles,
-                    ),
-                ),
-            )
-        )
-        self._register(
-            ToolSpec(
-                name="update_task",
-                description="Update editable task fields like title, due date, priority, status, or content.",
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "task_id": {"type": "string"},
-                        "fields": {"type": "object"},
-                    },
-                    "required": ["task_id", "fields"],
-                },
-                handler=self._wrap_handler(
-                    "update_task",
-                    lambda task_id, fields, **_: self.provider.update_task(
-                        task_id=task_id,
-                        fields=fields,
-                    ),
-                ),
-            )
-        )
-        self._register(
-            ToolSpec(
-                name="update_task_by_search",
-                description=(
-                    "Find an open task by title/content search and update it. "
-                    "Use when user refers to a task by name instead of task_id."
-                ),
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "search": {"type": "string"},
-                        "fields": {"type": "object"},
-                        "project_id": {"type": "string"},
-                        "prefer_due_date": {"type": "string"},
-                        "prefer_today": {"type": "boolean"},
-                        "exact_title": {"type": "boolean", "default": False},
-                    },
-                    "required": ["search", "fields"],
-                },
-                handler=self._wrap_handler(
-                    "update_task_by_search",
-                    self._update_task_by_search,
-                ),
-            )
-        )
-        self._register(
-            ToolSpec(
-                name="list_projects",
-                description=(
-                    "List available TickTick projects. Include the configured inbox/default project context when possible."
-                ),
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "Optional case-insensitive filter by project name. Usually omit this.",
-                        }
-                    },
-                    "additionalProperties": True,
-                },
-                handler=self._wrap_handler(
-                    "list_projects",
-                    self._list_projects,
-                ),
-            )
-        )
-        self._register(
-            ToolSpec(
-                name="list_upcoming_tasks",
-                description=(
-                    "List upcoming open tasks sorted by local due date. "
-                    "Use for ближайшие задачи, что скоро, на неделю, дедлайны."
-                ),
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "days": {"type": "integer", "default": 30},
-                        "limit": {"type": "integer", "default": 10},
-                        "include_overdue": {"type": "boolean", "default": False},
-                        "include_without_due_date": {"type": "boolean", "default": False},
-                        "project_id": {"type": "string"},
-                    },
-                },
-                handler=self._wrap_handler(
-                    "list_upcoming_tasks",
-                    self._list_upcoming_tasks,
-                ),
-            )
-        )
-        self._register(
-            ToolSpec(
-                name="move_task",
-                description="Move a task to another project.",
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "task_id": {"type": "string"},
-                        "project_id": {"type": "string"},
-                    },
-                    "required": ["task_id", "project_id"],
-                },
-                handler=self._wrap_handler(
-                    "move_task",
-                    lambda task_id, project_id, **_: self.provider.move_task(
-                        task_id=task_id,
-                        project_id=project_id,
-                    ),
-                ),
-            )
-        )
-        self._register(
-            ToolSpec(
-                name="mark_complete",
-                description="Mark a task as completed using TickTick completion flow.",
-                parameters={
-                    "type": "object",
-                    "properties": {"task_id": {"type": "string"}},
-                    "required": ["task_id"],
-                },
-                handler=self._wrap_handler(
-                    "mark_complete",
-                    lambda task_id, **_: self.provider.mark_complete(task_id),
-                ),
-            )
-        )
+
+    def _update_task(self, task_id: str, **payload: Any) -> Any:
+        fields = self._build_update_fields(payload)
+        if not fields:
+            return {
+                "error": {
+                    "tool": "update_task",
+                    "message": "Не переданы поля для обновления задачи.",
+                }
+            }
+        return self.provider.update_task(task_id=task_id, fields=fields)
 
     def _candidate_sort_key(self, item: dict[str, Any]) -> tuple[Any, Any, Any]:
         return (
@@ -480,13 +336,20 @@ class ToolRegistry:
     def _update_task_by_search(
         self,
         search: str,
-        fields: dict[str, object],
-        project_id: Optional[str] = None,
         prefer_due_date: Optional[str] = None,
         prefer_today: bool = False,
         exact_title: bool = False,
-        **_: Any,
+        **payload: Any,
     ) -> Any:
+        fields = self._build_update_fields(payload)
+        if not fields:
+            return {
+                "error": {
+                    "tool": "update_task_by_search",
+                    "message": "Не переданы поля для обновления задачи.",
+                }
+            }
+        project_id = payload.get("project_id")
         tasks = self.provider.list_tasks(status="normal", search=search, project_id=project_id)
         payloads = [self._augment_task_payload(self._dump_item(task)) for task in tasks]
         normalized_search = search.strip().lower()
@@ -543,7 +406,3 @@ class ToolRegistry:
         arguments = json.loads(arguments_json or "{}")
         result = self._tools[name].handler(**arguments)
         return json.dumps(result, ensure_ascii=False)
-
-    @staticmethod
-    def clarify_assessment_to_json(assessments: list[ClarifyAssessment]) -> str:
-        return json.dumps([item.model_dump() for item in assessments], ensure_ascii=False)

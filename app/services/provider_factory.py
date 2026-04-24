@@ -13,10 +13,7 @@ def build_ticktick_provider(
     root: Path,
     user_timezone: str | None = None,
 ) -> TickTickProvider:
+    _ = root
     if credentials.provider == "ticktick":
-        return TickTickApiProvider(
-            credentials=credentials,
-            guide_path=root / "ticktick_open_api_codex_guide.md",
-            user_timezone=user_timezone,
-        )
+        return TickTickApiProvider(credentials=credentials, user_timezone=user_timezone)
     return MockTickTickProvider()

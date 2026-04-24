@@ -7,6 +7,7 @@ import httpx
 
 from app.domain.models import Project, Task, TickTickCredentials
 from app.providers.ticktick.client import TickTickApiProvider
+from app.services.provider_factory import build_ticktick_provider
 
 
 def build_provider(**credentials_overrides: Any) -> TickTickApiProvider:
@@ -18,6 +19,18 @@ def build_provider(**credentials_overrides: Any) -> TickTickApiProvider:
     }
     credentials = TickTickCredentials(**payload)
     return TickTickApiProvider(credentials, user_timezone="Europe/Moscow")
+
+
+def test_provider_has_no_guide_path_runtime_attribute() -> None:
+    provider = build_provider()
+    assert not hasattr(provider, "guide_path")
+
+
+def test_provider_factory_builds_ticktick_provider_without_guide_path(tmp_path) -> None:
+    credentials = TickTickCredentials(provider="ticktick", access_token="token")
+    provider = build_ticktick_provider(credentials, tmp_path, user_timezone="Europe/Moscow")
+    assert isinstance(provider, TickTickApiProvider)
+    assert not hasattr(provider, "guide_path")
 
 
 def test_task_model_accepts_real_ticktick_payload() -> None:
@@ -372,6 +385,46 @@ def test_request_error_keeps_status_endpoint_and_body(monkeypatch) -> None:
         raise AssertionError("Expected ValueError")
     assert "TickTick API error 400 POST /task" in message
     assert '{"error":"bad request"}' in message
+
+
+def test_request_retries_and_recovers_from_temporary_network_error(monkeypatch) -> None:
+    provider = build_provider()
+    calls = {"count": 0}
+
+    def fake_client_request(method: str, path: str, **kwargs: Any) -> httpx.Response:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            request = httpx.Request(method, f"https://api.ticktick.com/open/v1{path}")
+            raise httpx.ConnectError("Temporary failure in name resolution", request=request)
+        request = httpx.Request(method, f"https://api.ticktick.com/open/v1{path}")
+        return httpx.Response(200, request=request, json={"ok": True})
+
+    monkeypatch.setattr(provider.client, "request", fake_client_request)
+    monkeypatch.setattr(provider.client, "close", lambda: None)
+    monkeypatch.setattr(provider, "_build_client", lambda: provider.client)
+    payload = provider._request("GET", "/project")
+    assert payload == {"ok": True}
+    assert calls["count"] == 2
+
+
+def test_request_wraps_network_errors_into_human_readable_value_error(monkeypatch) -> None:
+    provider = build_provider()
+
+    def fake_client_request(method: str, path: str, **kwargs: Any) -> httpx.Response:
+        request = httpx.Request(method, f"https://api.ticktick.com/open/v1{path}")
+        raise httpx.ConnectError("nodename nor servname provided, or not known", request=request)
+
+    monkeypatch.setattr(provider.client, "request", fake_client_request)
+    monkeypatch.setattr(provider.client, "close", lambda: None)
+    monkeypatch.setattr(provider, "_build_client", lambda: provider.client)
+    try:
+        provider._request("GET", "/project")
+    except ValueError as exc:
+        message = str(exc)
+    else:
+        raise AssertionError("Expected ValueError")
+    assert "TickTick network error during GET /project" in message
+    assert "DNS" in message
 
 
 def test_update_task_sends_safe_full_payload(monkeypatch) -> None:

@@ -27,13 +27,34 @@ def _prompt_choice(prompt: str, choices: set[str], default: str) -> str:
         print(f"Введите один из вариантов: {', '.join(sorted(choices))}")
 
 
+def _parse_csv_models(value: str) -> list[str]:
+    seen: set[str] = set()
+    models: list[str] = []
+    for item in value.split(","):
+        model = item.strip()
+        if not model or model in seen:
+            continue
+        seen.add(model)
+        models.append(model)
+    return models
+
+
 def _build_openrouter_config() -> OpenRouterConfig:
     env_api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
     env_model = os.getenv("OPENROUTER_MODEL", "").strip() or "openrouter/free"
+    env_fallback_models = os.getenv("OPENROUTER_FALLBACK_MODELS", "").strip()
 
     api_key = env_api_key or _prompt("OpenRouter API key")
     model = _prompt("OpenRouter model", env_model)
-    return OpenRouterConfig(api_key=api_key, model=model)
+    fallback_models_raw = _prompt(
+        "OpenRouter fallback models (comma-separated)",
+        env_fallback_models,
+    )
+    return OpenRouterConfig(
+        api_key=api_key,
+        model=model,
+        fallback_models=_parse_csv_models(fallback_models_raw),
+    )
 
 
 def _build_ticktick_credentials() -> TickTickCredentials:

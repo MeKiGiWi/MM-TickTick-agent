@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import Any, Optional
 
 from app.domain.models import Project
-from app.agents.clarify import ClarifyAgent
 from app.chat.prompts import SYSTEM_PROMPT
 from app.config.setup import ensure_config
 from app.llm.openrouter import OpenRouterClient, OpenRouterToolLoop
@@ -27,7 +26,6 @@ class ChatSession:
         )
         self.registry = ToolRegistry(self.provider, user_timezone=self.config.user_timezone)
         self.llm = OpenRouterToolLoop(OpenRouterClient(self.config.openrouter), self.registry)
-        self.clarify_agent = ClarifyAgent()
         self.messages: list[dict[str, object]] = [{"role": "system", "content": SYSTEM_PROMPT}]
 
     @classmethod
@@ -81,6 +79,17 @@ class ChatSession:
         return value
 
     @staticmethod
+    def _format_turn_error(exc: Exception) -> str:
+        message = str(exc).strip() or exc.__class__.__name__
+        lowered = message.lower()
+        if "network error" in lowered or "dns" in lowered or "connection error" in lowered:
+            return (
+                "Не удалось обработать ход из-за временной сетевой ошибки. "
+                f"Подробности: {message}"
+            )
+        return f"Не удалось обработать ход: {message}"
+
+    @staticmethod
     def _format_projects_output(projects: list[Project]) -> str:
         if not projects:
             return "Проекты не найдены."
@@ -111,7 +120,6 @@ class ChatSession:
             if self._handle_local_command(user_input):
                 continue
             self.messages.append({"role": "user", "content": user_input})
-            self._maybe_add_clarify_context(user_input)
             try:
                 self.messages = self._upsert_runtime_context(
                     self.messages,
@@ -120,7 +128,7 @@ class ChatSession:
                 self.messages = self._sanitize_payload(self.messages)
                 answer, updated_messages = self.llm.run_turn(self.messages)
             except Exception as exc:
-                answer = f"Не удалось обработать ход: {exc}"
+                answer = self._format_turn_error(exc)
                 updated_messages = self.messages + [{"role": "assistant", "content": answer}]
             self.messages = updated_messages
             answer = answer.strip()
@@ -128,20 +136,3 @@ class ChatSession:
                 answer = "Не получил текстовый ответ от модели."
             print()
             print(f"agent> {answer}")
-
-    def _maybe_add_clarify_context(self, user_input: str) -> None:
-        lowered = user_input.lower()
-        if "подзадач" not in lowered and "разбей" not in lowered and "clarify" not in lowered:
-            return
-        tasks = self.provider.list_tasks()
-        assessments = self.clarify_agent.assess_tasks(tasks)
-        formatted = self.registry.clarify_assessment_to_json(assessments)
-        self.messages.append(
-            {
-                "role": "system",
-                "content": (
-                    "Ниже локальная эвристическая оценка Clarify Agent по текущим задачам. "
-                    f"Используй ее как вспомогательный контекст: {formatted}"
-                ),
-            }
-        )

@@ -1,8 +1,8 @@
 from types import SimpleNamespace
 
+from app.chat.session import ChatSession
 from app.providers.mock.ticktick import MockTickTickProvider
 from app.tools.registry import ToolRegistry
-from app.chat.session import ChatSession
 
 
 def test_chat_session_sanitizes_surrogate_text() -> None:
@@ -71,12 +71,13 @@ def test_chat_session_prints_blank_line_before_agent_answer(monkeypatch, capsys)
     session.provider = MockTickTickProvider()
     session.registry = ToolRegistry(session.provider, user_timezone="Europe/Moscow")
     session.llm = SimpleNamespace(
-        run_turn=lambda messages: ("Ответ пользователю", messages + [{"role": "assistant", "content": "Ответ пользователю"}])
+        run_turn=lambda messages: (
+            "Ответ пользователю",
+            messages + [{"role": "assistant", "content": "Ответ пользователю"}],
+        )
     )
-    session.clarify_agent = SimpleNamespace(assess_tasks=lambda tasks: [])
     session.config = SimpleNamespace(user_timezone="Europe/Moscow")
     session.messages = [{"role": "system", "content": "base"}]
-    session._maybe_add_clarify_context = lambda user_input: None
 
     answers = iter(["привет", "exit"])
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
@@ -94,10 +95,8 @@ def test_chat_session_strips_answer_and_prints_fallback_for_empty(monkeypatch, c
     session.llm = SimpleNamespace(
         run_turn=lambda messages: ("\n\n", messages + [{"role": "assistant", "content": "\n\n"}])
     )
-    session.clarify_agent = SimpleNamespace(assess_tasks=lambda tasks: [])
     session.config = SimpleNamespace(user_timezone="Europe/Moscow")
     session.messages = [{"role": "system", "content": "base"}]
-    session._maybe_add_clarify_context = lambda user_input: None
 
     answers = iter(["привет", "exit"])
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
@@ -106,3 +105,32 @@ def test_chat_session_strips_answer_and_prints_fallback_for_empty(monkeypatch, c
 
     output = capsys.readouterr().out
     assert "agent> Не получил текстовый ответ от модели." in output
+
+
+def test_chat_session_does_not_inject_keyword_based_clarify_context(monkeypatch) -> None:
+    recorded_messages: list[dict[str, object]] = []
+
+    def fake_run_turn(messages: list[dict[str, object]]) -> tuple[str, list[dict[str, object]]]:
+        recorded_messages.extend(messages)
+        return "Ок", messages + [{"role": "assistant", "content": "Ок"}]
+
+    session = ChatSession.__new__(ChatSession)
+    session.provider = MockTickTickProvider()
+    session.registry = ToolRegistry(session.provider, user_timezone="Europe/Moscow")
+    session.llm = SimpleNamespace(run_turn=fake_run_turn)
+    session.config = SimpleNamespace(user_timezone="Europe/Moscow")
+    session.messages = [{"role": "system", "content": "base"}]
+
+    answers = iter(["разбей задачу на подзадачи", "exit"])
+    monkeypatch.setattr("builtins.input", lambda _: next(answers))
+
+    session.run()
+
+    assert any(message["role"] == "user" for message in recorded_messages)
+    assert all("Clarify Agent" not in str(message.get("content", "")) for message in recorded_messages)
+
+
+def test_chat_session_formats_network_like_turn_errors() -> None:
+    message = ChatSession._format_turn_error(RuntimeError("OpenRouter network error: ошибка DNS-разрешения имени"))
+    assert "временной сетевой ошибки" in message
+    assert "DNS" in message

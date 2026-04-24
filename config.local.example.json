@@ -3,6 +3,10 @@
     "api_key": "or-your-openrouter-key",
     "base_url": "https://openrouter.ai/api/v1",
     "model": "openrouter/free",
+    "fallback_models": [
+      "openai/gpt-4o-mini",
+      "anthropic/claude-3.5-sonnet"
+    ],
     "reasoning_enabled": true
   },
   "ticktick": {

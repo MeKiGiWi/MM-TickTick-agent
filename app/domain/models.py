@@ -6,7 +6,6 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 
 TaskStatus = Literal["normal", "completed"]
-ClarifyClassification = Literal["single_action", "project", "unclear"]
 
 
 class Task(BaseModel):
@@ -66,17 +65,6 @@ class Project(BaseModel):
     kind: Literal["TASK", "NOTE"] = "TASK"
 
 
-class ClarifyAssessment(BaseModel):
-    task_id: str
-    title: str
-    classification: ClarifyClassification
-    concrete: bool
-    vague: bool
-    needs_breakdown: bool
-    reasoning: str
-    suggested_subtasks: list[str] = Field(default_factory=list)
-
-
 class TickTickCredentials(BaseModel):
     provider: Literal["mock", "ticktick"] = "mock"
     client_id: str = ""
@@ -92,6 +80,7 @@ class OpenRouterConfig(BaseModel):
     api_key: str
     base_url: str = "https://openrouter.ai/api/v1"
     model: str = "openrouter/free"
+    fallback_models: list[str] = Field(default_factory=list)
     reasoning_enabled: bool = True
 
 

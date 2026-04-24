@@ -115,7 +115,9 @@ def test_oauth_callback_bind_host_is_docker_friendly(monkeypatch) -> None:
 def test_ensure_config_runs_oauth_for_ticktick(monkeypatch, tmp_path) -> None:
     from app.config.setup import ensure_config
 
-    answers = iter(["or-test-key", "", "ticktick", "client-id", "client-secret", "https://example.com/callback", "inbox"])
+    answers = iter(
+        ["or-test-key", "", "", "ticktick", "client-id", "client-secret", "https://example.com/callback", "inbox"]
+    )
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
 
     class DummyOAuthResult:
@@ -131,7 +133,7 @@ def test_ensure_config_runs_oauth_for_ticktick(monkeypatch, tmp_path) -> None:
 def test_ensure_config_uses_env_for_ticktick_credentials(monkeypatch, tmp_path) -> None:
     from app.config.setup import ensure_config
 
-    answers = iter(["or-test-key", "", "ticktick", "inbox"])
+    answers = iter(["or-test-key", "", "", "ticktick", "inbox"])
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
     monkeypatch.setenv("TICKTICK_CLIENT_ID", "env-client-id")
     monkeypatch.setenv("TICKTICK_CLIENT_SECRET", "env-client-secret")

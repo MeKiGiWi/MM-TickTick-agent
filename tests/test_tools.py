@@ -6,10 +6,20 @@ from app.providers.mock.ticktick import MockTickTickProvider
 from app.tools.registry import ToolRegistry
 
 
-def test_create_task_tool_is_registered() -> None:
+def test_registry_loads_tools_from_json_specs() -> None:
     registry = ToolRegistry(MockTickTickProvider(), user_timezone="Europe/Moscow")
+    assert registry.specs_path.as_posix().endswith("app/tools/specs/ticktick_tools.json")
+
     tools = registry.list_openrouter_tools()
-    assert any(tool["function"]["name"] == "create_task" for tool in tools)
+    names = [tool["function"]["name"] for tool in tools]
+
+    assert "create_task" in names
+    assert "update_task_by_search" in names
+
+    create_task = next(tool["function"] for tool in tools if tool["function"]["name"] == "create_task")
+    assert create_task["description"] == "Creates a new TickTick task. Use for adding a task, reminder, or to-do item."
+    assert "additionalProperties" not in create_task["parameters"]
+    assert "required" not in create_task["parameters"]
 
 
 def test_create_task_tool_uses_mock_provider_defaults() -> None:
@@ -111,6 +121,7 @@ def test_list_projects_tool_schema_does_not_require_id_or_name() -> None:
     assert "required" not in list_projects["parameters"]
     assert "id" not in list_projects["parameters"]["properties"]
     assert "name" not in list_projects["parameters"]["properties"]
+    assert "additionalProperties" not in list_projects["parameters"]
 
 
 def test_create_task_tool_schema_exposes_all_day_fields() -> None:
@@ -121,6 +132,54 @@ def test_create_task_tool_schema_exposes_all_day_fields() -> None:
     assert "start_date" in create_task["parameters"]["properties"]
     assert "is_all_day" in create_task["parameters"]["properties"]
     assert "time_zone" in create_task["parameters"]["properties"]
+
+
+def test_update_task_schema_uses_explicit_fields_not_freeform_object() -> None:
+    registry = ToolRegistry(MockTickTickProvider(), user_timezone="Europe/Moscow")
+    update_task = next(
+        tool["function"] for tool in registry.list_openrouter_tools() if tool["function"]["name"] == "update_task"
+    )
+    assert "fields" not in update_task["parameters"]["properties"]
+    assert "title" in update_task["parameters"]["properties"]
+    assert "additionalProperties" not in update_task["parameters"]
+
+
+def test_openrouter_tools_strip_provider_incompatible_schema_keywords() -> None:
+    registry = ToolRegistry(MockTickTickProvider(), user_timezone="Europe/Moscow")
+    update_task_by_search = next(
+        tool["function"]
+        for tool in registry.list_openrouter_tools()
+        if tool["function"]["name"] == "update_task_by_search"
+    )
+    assert "required" not in update_task_by_search["parameters"]
+    assert "additionalProperties" not in update_task_by_search["parameters"]
+    assert "default" not in update_task_by_search["parameters"]["properties"]["exact_title"]
+
+
+def test_update_task_updates_with_explicit_arguments() -> None:
+    provider = MockTickTickProvider()
+    registry = ToolRegistry(provider, user_timezone="Europe/Moscow")
+
+    payload = json.loads(
+        registry.execute_tool(
+            "update_task",
+            json.dumps({"task_id": "task-3", "title": "Купить лампу", "priority": 3}, ensure_ascii=False),
+        )
+    )
+
+    assert payload["title"] == "Купить лампу"
+    assert payload["priority"] == 3
+
+
+def test_update_task_requires_at_least_one_mutation_field() -> None:
+    registry = ToolRegistry(MockTickTickProvider(), user_timezone="Europe/Moscow")
+    payload = json.loads(
+        registry.execute_tool(
+            "update_task",
+            json.dumps({"task_id": "task-3"}, ensure_ascii=False),
+        )
+    )
+    assert payload["error"]["tool"] == "update_task"
 
 
 def test_upcoming_tasks_excludes_overdue_and_undated_by_default() -> None:
@@ -304,7 +363,7 @@ def test_update_task_by_search_updates_unique_exact_title() -> None:
             json.dumps(
                 {
                     "search": "hello world",
-                    "fields": {"title": "hello world!"},
+                    "title": "hello world!",
                     "exact_title": True,
                     "prefer_today": True,
                 },
@@ -320,7 +379,7 @@ def test_update_task_by_search_returns_not_found_without_asking_for_id() -> None
     payload = json.loads(
         registry.execute_tool(
             "update_task_by_search",
-            json.dumps({"search": "missing", "fields": {"title": "x"}}, ensure_ascii=False),
+            json.dumps({"search": "missing", "title": "x"}, ensure_ascii=False),
         )
     )
     assert payload["not_found"] is True
@@ -345,12 +404,23 @@ def test_update_task_by_search_returns_clarification_without_ids() -> None:
     payload = json.loads(
         registry.execute_tool(
             "update_task_by_search",
-            json.dumps({"search": "hello world", "fields": {"title": "hello world!"}}, ensure_ascii=False),
+            json.dumps({"search": "hello world", "title": "hello world!"}, ensure_ascii=False),
         )
     )
     assert payload["needs_clarification"] is True
     assert payload["candidates"]
     assert all("id" not in item for item in payload["candidates"])
+
+
+def test_update_task_by_search_requires_mutation_fields() -> None:
+    registry = ToolRegistry(MockTickTickProvider(), user_timezone="Europe/Moscow")
+    payload = json.loads(
+        registry.execute_tool(
+            "update_task_by_search",
+            json.dumps({"search": "hello world"}, ensure_ascii=False),
+        )
+    )
+    assert payload["error"]["tool"] == "update_task_by_search"
 
 
 def test_upcoming_tasks_snapshot_like_output_contains_expected_fields() -> None:
@@ -442,7 +512,7 @@ def test_scenario_update_task_by_name_adds_exclamation_mark() -> None:
             json.dumps(
                 {
                     "search": "hello world",
-                    "fields": {"title": "hello world!"},
+                    "title": "hello world!",
                     "exact_title": True,
                     "prefer_today": True,
                 },
@@ -471,10 +541,7 @@ def test_scenario_two_matching_tasks_returns_short_clarification_payload_without
     payload = json.loads(
         registry.execute_tool(
             "update_task_by_search",
-            json.dumps(
-                {"search": "hello world", "fields": {"title": "hello world!"}},
-                ensure_ascii=False,
-            ),
+            json.dumps({"search": "hello world", "title": "hello world!"}, ensure_ascii=False),
         )
     )
     assert payload["needs_clarification"] is True
