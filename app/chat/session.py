@@ -27,7 +27,11 @@ class ChatSession:
             user_timezone=self.config.user_timezone,
         )
         self.registry = ToolRegistry(self.provider, user_timezone=self.config.user_timezone)
-        self.llm = OpenRouterToolLoop(OpenRouterClient(self.config.openrouter), self.registry)
+        self.llm = OpenRouterToolLoop(
+            OpenRouterClient(self.config.openrouter),
+            self.registry,
+            max_tool_steps=self.config.openrouter.max_tool_steps,
+        )
         self.messages: list[dict[str, object]] = [{"role": "system", "content": SYSTEM_PROMPT}]
 
     @classmethod
@@ -86,8 +90,7 @@ class ChatSession:
         lowered = message.lower()
         if "network error" in lowered or "dns" in lowered or "connection error" in lowered:
             return (
-                "Не удалось обработать ход из-за временной сетевой ошибки. "
-                f"Подробности: {message}"
+                f"Не удалось обработать ход из-за временной сетевой ошибки. Подробности: {message}"
             )
         return f"Не удалось обработать ход: {message}"
 

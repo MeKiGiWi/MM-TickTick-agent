@@ -134,7 +134,9 @@ def _resolve_callback_bind_host(redirect_uri: str) -> Optional[str]:
     return parsed.hostname
 
 
-def _wait_for_callback(redirect_uri: str, timeout_seconds: float = 120.0) -> Optional[Dict[str, str]]:
+def _wait_for_callback(
+    redirect_uri: str, timeout_seconds: float = 120.0
+) -> Optional[Dict[str, str]]:
     parsed = urlparse(redirect_uri)
     bind_host = _resolve_callback_bind_host(redirect_uri)
     if bind_host is None:
@@ -183,7 +185,9 @@ def run_oauth_login(
     )
 
     print("\nTickTick OAuth login")
-    print("Для реального входа нужен TickTick Developer app с client_id, client_secret и redirect_uri.")
+    print(
+        "Для реального входа нужен TickTick Developer app с client_id, client_secret и redirect_uri."
+    )
     print(f"Откройте ссылку и подтвердите доступ:\n{auth_url}\n")
 
     parsed = urlparse(credentials.redirect_uri)
@@ -193,6 +197,12 @@ def run_oauth_login(
             webbrowser.open(auth_url)
         elif open_browser:
             print("Авто-открытие браузера пропущено: похоже, это container/headless среда.")
+        if _is_container_environment():
+            print(
+                "Подсказка: для автоматического localhost callback в Docker используйте "
+                "`docker compose run --rm --service-ports app` "
+                "или `docker compose up app`."
+            )
         print(f"Жду callback на {credentials.redirect_uri}")
         callback_params = _wait_for_callback(
             credentials.redirect_uri,
@@ -202,12 +212,13 @@ def run_oauth_login(
             print("Callback не сработал автоматически.")
 
     if callback_params is None:
-        callback_value = input("Если callback не сработал, вставьте полный redirect URL или code: ").strip()
+        callback_value = input(
+            "Если callback не сработал, вставьте полный redirect URL или code: "
+        ).strip()
         if callback_value.startswith("http://") or callback_value.startswith("https://"):
             parsed_callback = urlparse(callback_value)
             callback_params = {
-                key: values[0]
-                for key, values in parse_qs(parsed_callback.query).items()
+                key: values[0] for key, values in parse_qs(parsed_callback.query).items()
             }
         else:
             callback_params = {"code": callback_value, "state": state}

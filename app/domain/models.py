@@ -13,13 +13,14 @@ class Task(BaseModel):
 
     id: str
     title: str
-    project_id: str = Field(
-        default="inbox",
-        validation_alias=AliasChoices("project_id", "projectId"),
-    )
+    project_id: str = Field(validation_alias=AliasChoices("project_id", "projectId"))
     project_name: Optional[str] = Field(
         default=None,
         validation_alias=AliasChoices("project_name", "projectName"),
+    )
+    parent_id: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("parent_id", "parentId"),
     )
     status: TaskStatus = "normal"
     priority: int = 0
@@ -81,7 +82,8 @@ class OpenRouterConfig(BaseModel):
     base_url: str = "https://openrouter.ai/api/v1"
     model: str = "qwen/qwen-turbo"
     fallback_models: list[str] = Field(default_factory=list)
-    reasoning_enabled: bool = True
+    reasoning_enabled: bool = False
+    max_tool_steps: int = 8
 
 
 class AppConfig(BaseModel):

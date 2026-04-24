@@ -2,6 +2,7 @@ import json
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from app.chat.prompts import SYSTEM_PROMPT
 from app.providers.mock.ticktick import MockTickTickProvider
 from app.tools.registry import ToolRegistry
 
@@ -14,10 +15,13 @@ def test_registry_loads_tools_from_json_specs() -> None:
     names = [tool["function"]["name"] for tool in tools]
 
     assert "create_task" in names
+    assert "create_task_with_subtasks" in names
     assert "update_task_by_search" in names
 
-    create_task = next(tool["function"] for tool in tools if tool["function"]["name"] == "create_task")
-    assert create_task["description"] == "Creates a new TickTick task. Use for adding a task, reminder, or to-do item."
+    create_task = next(
+        tool["function"] for tool in tools if tool["function"]["name"] == "create_task"
+    )
+    assert "configured default project" in create_task["description"]
     assert "additionalProperties" not in create_task["parameters"]
     assert create_task["parameters"]["required"] == ["title"]
 
@@ -44,6 +48,45 @@ def test_create_subtasks_tool() -> None:
     assert len(payload) == 2
     assert payload[0]["title"] == "Шаг 1"
     assert payload[0]["project_name"] == "Inbox"
+    assert payload[0]["parent_id"] == "task-1"
+
+
+def test_create_task_with_subtasks_tool() -> None:
+    registry = ToolRegistry(MockTickTickProvider(), user_timezone="Europe/Moscow")
+    result = registry.execute_tool(
+        "create_task_with_subtasks",
+        json.dumps(
+            {"title": "Собрать поездку", "subtask_titles": ["Купить билеты", "Собрать вещи"]},
+            ensure_ascii=False,
+        ),
+    )
+    payload = json.loads(result)
+    assert payload["task"]["title"] == "Собрать поездку"
+    assert [item["title"] for item in payload["subtasks"]] == ["Купить билеты", "Собрать вещи"]
+    assert all(item["parent_id"] == payload["task"]["id"] for item in payload["subtasks"])
+
+
+def test_create_subtasks_after_create_task_uses_created_parent_id() -> None:
+    registry = ToolRegistry(MockTickTickProvider(), user_timezone="Europe/Moscow")
+    created_parent = json.loads(
+        registry.execute_tool(
+            "create_task",
+            json.dumps({"title": "Новая родительская задача"}, ensure_ascii=False),
+        )
+    )
+    created_subtasks = json.loads(
+        registry.execute_tool(
+            "create_subtasks",
+            json.dumps(
+                {"task_id": created_parent["id"], "titles": ["Подзадача 1", "Подзадача 2"]},
+                ensure_ascii=False,
+            ),
+        )
+    )
+    assert [item["parent_id"] for item in created_subtasks] == [
+        created_parent["id"],
+        created_parent["id"],
+    ]
 
 
 def test_ticktick_all_day_due_date_uses_task_timezone_for_display() -> None:
@@ -116,7 +159,9 @@ def test_list_projects_tool_filters_by_query() -> None:
 def test_list_projects_tool_schema_does_not_require_id_or_name() -> None:
     registry = ToolRegistry(MockTickTickProvider(), user_timezone="Europe/Moscow")
     list_projects = next(
-        tool["function"] for tool in registry.list_openrouter_tools() if tool["function"]["name"] == "list_projects"
+        tool["function"]
+        for tool in registry.list_openrouter_tools()
+        if tool["function"]["name"] == "list_projects"
     )
     assert "required" not in list_projects["parameters"]
     assert "id" not in list_projects["parameters"]["properties"]
@@ -127,7 +172,9 @@ def test_list_projects_tool_schema_does_not_require_id_or_name() -> None:
 def test_create_task_tool_schema_exposes_all_day_fields() -> None:
     registry = ToolRegistry(MockTickTickProvider(), user_timezone="Europe/Moscow")
     create_task = next(
-        tool["function"] for tool in registry.list_openrouter_tools() if tool["function"]["name"] == "create_task"
+        tool["function"]
+        for tool in registry.list_openrouter_tools()
+        if tool["function"]["name"] == "create_task"
     )
     assert "start_date" in create_task["parameters"]["properties"]
     assert "is_all_day" in create_task["parameters"]["properties"]
@@ -137,7 +184,9 @@ def test_create_task_tool_schema_exposes_all_day_fields() -> None:
 def test_update_task_schema_uses_explicit_fields_not_freeform_object() -> None:
     registry = ToolRegistry(MockTickTickProvider(), user_timezone="Europe/Moscow")
     update_task = next(
-        tool["function"] for tool in registry.list_openrouter_tools() if tool["function"]["name"] == "update_task"
+        tool["function"]
+        for tool in registry.list_openrouter_tools()
+        if tool["function"]["name"] == "update_task"
     )
     assert "fields" not in update_task["parameters"]["properties"]
     assert "title" in update_task["parameters"]["properties"]
@@ -156,6 +205,16 @@ def test_openrouter_tools_strip_provider_incompatible_schema_keywords() -> None:
     assert "default" not in update_task_by_search["parameters"]["properties"]["exact_title"]
 
 
+def test_create_task_with_subtasks_schema_keeps_required_fields() -> None:
+    registry = ToolRegistry(MockTickTickProvider(), user_timezone="Europe/Moscow")
+    create_task_with_subtasks = next(
+        tool["function"]
+        for tool in registry.list_openrouter_tools()
+        if tool["function"]["name"] == "create_task_with_subtasks"
+    )
+    assert create_task_with_subtasks["parameters"]["required"] == ["title", "subtask_titles"]
+
+
 def test_create_subtasks_schema_keeps_required_fields() -> None:
     registry = ToolRegistry(MockTickTickProvider(), user_timezone="Europe/Moscow")
     create_subtasks = next(
@@ -166,6 +225,14 @@ def test_create_subtasks_schema_keeps_required_fields() -> None:
     assert create_subtasks["parameters"]["required"] == ["task_id", "titles"]
 
 
+def test_prompt_contains_general_domain_invariants_only() -> None:
+    assert "Проект содержит задачи." in SYSTEM_PROMPT
+    assert "Подзадача — это задача с parentId" in SYSTEM_PROMPT
+    assert "Не проси у пользователя внутренние task_id" in SYSTEM_PROMPT
+    assert "create_task" not in SYSTEM_PROMPT
+    assert "create_subtasks" not in SYSTEM_PROMPT
+
+
 def test_update_task_updates_with_explicit_arguments() -> None:
     provider = MockTickTickProvider()
     registry = ToolRegistry(provider, user_timezone="Europe/Moscow")
@@ -173,7 +240,9 @@ def test_update_task_updates_with_explicit_arguments() -> None:
     payload = json.loads(
         registry.execute_tool(
             "update_task",
-            json.dumps({"task_id": "task-3", "title": "Купить лампу", "priority": 3}, ensure_ascii=False),
+            json.dumps(
+                {"task_id": "task-3", "title": "Купить лампу", "priority": 3}, ensure_ascii=False
+            ),
         )
     )
 
@@ -400,10 +469,20 @@ def test_update_task_by_search_returns_clarification_without_ids() -> None:
     provider = MockTickTickProvider()
     provider.tasks = {
         "task-1": provider.tasks["task-1"].model_copy(
-            update={"title": "hello world", "project_name": "Inbox", "due_date": "2026-04-25T09:00:00+0000", "time_zone": "Europe/Moscow"}
+            update={
+                "title": "hello world",
+                "project_name": "Inbox",
+                "due_date": "2026-04-25T09:00:00+0000",
+                "time_zone": "Europe/Moscow",
+            }
         ),
         "task-2": provider.tasks["task-2"].model_copy(
-            update={"title": "hello world", "project_name": "Work", "due_date": "2026-04-25T09:00:00+0000", "time_zone": "Europe/Moscow"}
+            update={
+                "title": "hello world",
+                "project_name": "Work",
+                "due_date": "2026-04-25T09:00:00+0000",
+                "time_zone": "Europe/Moscow",
+            }
         ),
     }
     registry = ToolRegistry(
@@ -537,10 +616,20 @@ def test_scenario_two_matching_tasks_returns_short_clarification_payload_without
     provider = MockTickTickProvider()
     provider.tasks = {
         "task-1": provider.tasks["task-1"].model_copy(
-            update={"title": "hello world", "project_name": "Inbox", "due_date": "2026-04-25T09:00:00+0000", "time_zone": "Europe/Moscow"}
+            update={
+                "title": "hello world",
+                "project_name": "Inbox",
+                "due_date": "2026-04-25T09:00:00+0000",
+                "time_zone": "Europe/Moscow",
+            }
         ),
         "task-2": provider.tasks["task-2"].model_copy(
-            update={"title": "hello world", "project_name": "Work", "due_date": "2026-04-25T09:00:00+0000", "time_zone": "Europe/Moscow"}
+            update={
+                "title": "hello world",
+                "project_name": "Work",
+                "due_date": "2026-04-25T09:00:00+0000",
+                "time_zone": "Europe/Moscow",
+            }
         ),
     }
     registry = ToolRegistry(

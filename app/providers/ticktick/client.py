@@ -12,6 +12,8 @@ from app.utils.timezone import configured_timezone_name, resolve_timezone, timez
 
 
 class TickTickApiProvider(TickTickProvider):
+    DEFAULT_PROJECT_ALIASES = {"inbox", "default", "входящие"}
+
     def __init__(
         self,
         credentials: TickTickCredentials,
@@ -64,7 +66,9 @@ class TickTickApiProvider(TickTickProvider):
                     raise ValueError(self._format_request_error(exc, method, path)) from exc
         else:
             if last_error is not None:
-                raise ValueError(self._format_request_error(last_error, method, path)) from last_error
+                raise ValueError(
+                    self._format_request_error(last_error, method, path)
+                ) from last_error
             raise ValueError(f"TickTick network error during {method} {path}")
         try:
             response.raise_for_status()
@@ -179,12 +183,16 @@ class TickTickApiProvider(TickTickProvider):
         self._get_project_by_id(project_id)
         return project_id
 
-    def _resolve_default_project_id(self) -> str:
+    def is_default_project_alias(self, value: str) -> bool:
+        return value.strip().lower() in self.DEFAULT_PROJECT_ALIASES
+
+    def resolve_default_project_id(self) -> str:
         configured = (self.credentials.inbox_project_id or "").strip()
         if configured:
             try:
-                return self._validated_project_id(configured)
-            except (ValueError, httpx.HTTPStatusError):
+                if not self.is_default_project_alias(configured):
+                    return self._validated_project_id(configured)
+            except ValueError:
                 pass
 
         projects = self._load_projects()
@@ -193,9 +201,9 @@ class TickTickApiProvider(TickTickProvider):
             for project in projects:
                 if project.id.lower() == lowered or project.name.lower() == lowered:
                     return project.id
-        for inbox_name in ("inbox", "входящие"):
+        for alias in self.DEFAULT_PROJECT_ALIASES:
             for project in projects:
-                if project.name.lower() == inbox_name:
+                if project.name.lower() == alias:
                     return project.id
         for project in projects:
             if project.kind == "TASK":
@@ -206,13 +214,22 @@ class TickTickApiProvider(TickTickProvider):
             "Не удалось определить project_id для новой задачи: не найден доступный inbox/default project."
         )
 
-    def _resolve_target_project_id(self, project_id: Optional[str]) -> str:
-        target = (project_id or "").strip()
-        if not target:
-            return self._resolve_default_project_id()
-        if target.lower() in {"inbox", "входящие"}:
-            return self._resolve_default_project_id()
-        return self._validated_project_id(target)
+    def resolve_project_id(self, project_ref: Optional[str] = None) -> str:
+        target = (project_ref or "").strip()
+        if not target or self.is_default_project_alias(target):
+            return self.resolve_default_project_id()
+        try:
+            return self._validated_project_id(target)
+        except ValueError:
+            pass
+        projects = self._load_projects()
+        lowered = target.lower()
+        matches = [project for project in projects if project.name.lower() == lowered]
+        if len(matches) == 1:
+            return matches[0].id
+        if matches:
+            raise ValueError(f"Проект '{target}' неоднозначен, используйте точный project_id.")
+        raise ValueError(f"Проект '{target}' не найден.")
 
     def _search_task_project_id(self, task_id: str) -> Optional[str]:
         cached = self._task_project_cache.get(task_id)
@@ -334,9 +351,10 @@ class TickTickApiProvider(TickTickProvider):
         time_zone: Optional[str] = None,
         priority: Optional[int] = None,
     ) -> Task:
+        resolved_project_id = self.resolve_project_id(project_id)
         payload: dict[str, Any] = {
             "title": title,
-            "projectId": self._resolve_target_project_id(project_id),
+            "projectId": resolved_project_id,
         }
         if content:
             payload["content"] = content
@@ -351,7 +369,10 @@ class TickTickApiProvider(TickTickProvider):
         if priority is not None:
             payload["priority"] = priority
         payload = self._normalize_task_datetime_fields(payload)
-        return self._normalize_task(self._request("POST", "/task", json=payload))
+        response = self._request("POST", "/task", json=payload)
+        if isinstance(response, dict) and not response.get("projectId"):
+            response = {**response, "projectId": resolved_project_id}
+        return self._normalize_task(response)
 
     def list_tasks(
         self,
@@ -398,8 +419,41 @@ class TickTickApiProvider(TickTickProvider):
                 "projectId": parent.project_id,
                 "parentId": parent.id,
             }
-            created.append(self._normalize_task(self._request("POST", "/task", json=payload)))
+            response = self._request("POST", "/task", json=payload)
+            if isinstance(response, dict):
+                response = {
+                    **response,
+                    "projectId": response.get("projectId") or parent.project_id,
+                    "parentId": response.get("parentId") or parent.id,
+                }
+            created.append(self._normalize_task(response))
         return created
+
+    def create_task_with_subtasks(
+        self,
+        *,
+        title: str,
+        subtask_titles: list[str],
+        project_id: Optional[str] = None,
+        content: Optional[str] = None,
+        due_date: Optional[str] = None,
+        start_date: Optional[str] = None,
+        is_all_day: Optional[bool] = None,
+        time_zone: Optional[str] = None,
+        priority: Optional[int] = None,
+    ) -> dict[str, object]:
+        task = self.create_task(
+            title=title,
+            project_id=project_id,
+            content=content,
+            due_date=due_date,
+            start_date=start_date,
+            is_all_day=is_all_day,
+            time_zone=time_zone,
+            priority=priority,
+        )
+        subtasks = self.create_subtasks(task.id, subtask_titles)
+        return {"task": task, "subtasks": subtasks}
 
     def update_task(self, task_id: str, fields: dict[str, object]) -> Task:
         current = self.get_task_details(task_id)
@@ -423,7 +477,11 @@ class TickTickApiProvider(TickTickProvider):
     def list_projects(self) -> list[Project]:
         projects = self._load_projects()
         configured = (self.credentials.inbox_project_id or "").strip()
-        if configured and configured not in {project.id for project in projects}:
+        if (
+            configured
+            and not self.is_default_project_alias(configured)
+            and configured not in {project.id for project in projects}
+        ):
             try:
                 configured_project = self._get_project_by_id(configured)
                 if configured_project.id not in {project.id for project in projects}:

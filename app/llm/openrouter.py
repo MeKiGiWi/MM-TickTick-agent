@@ -16,10 +16,24 @@ class ChatCompletionResult:
     raw_response: dict[str, Any]
 
 
-class _TryNextModel(Exception):
-    def __init__(self, error: Exception) -> None:
-        super().__init__(str(error))
-        self.error = error
+class OpenRouterError(RuntimeError):
+    pass
+
+
+class NetworkError(OpenRouterError):
+    pass
+
+
+class ProviderUnavailable(OpenRouterError):
+    pass
+
+
+class RateLimitExceeded(OpenRouterError):
+    pass
+
+
+class ConfigurationError(OpenRouterError):
+    pass
 
 
 class OpenRouterClient:
@@ -39,36 +53,46 @@ class OpenRouterClient:
         messages: List[dict[str, Any]],
         tools: List[dict[str, Any]],
     ) -> ChatCompletionResult:
-        last_retryable_error: Exception | None = None
         candidate_models = self._candidate_models()
-        for model_index, model in enumerate(candidate_models):
+        attempted: list[str] = []
+        pending = list(candidate_models)
+
+        while pending:
+            model = pending.pop(0)
+            attempted.append(model)
             try:
                 response = self._create_chat_completion_for_model(
-                    model=model,
-                    fallback_models=candidate_models[model_index + 1 :],
-                    messages=messages,
-                    tools=tools,
+                    model=model, messages=messages, tools=tools
                 )
                 payload = self._dump_response(response)
                 message = self._extract_message(payload)
                 return ChatCompletionResult(message=message, raw_response=payload)
-            except _TryNextModel as exc:
-                last_retryable_error = exc.error
-                continue
+            except RateLimitExceeded as exc:
+                if self._is_free_models_per_min_error(exc) and self._is_free_model(model):
+                    pending = [
+                        candidate for candidate in pending if not self._is_free_model(candidate)
+                    ]
+                if pending:
+                    continue
+                attempted_text = ", ".join(attempted)
+                raise RateLimitExceeded(
+                    f"OpenRouter rate limit: {exc}. Проверены модели: [{attempted_text}]"
+                ) from exc
+            except ProviderUnavailable as exc:
+                pending = [candidate for candidate in pending if not self._is_free_model(candidate)]
+                if pending:
+                    continue
+                attempted_text = ", ".join(attempted)
+                raise ProviderUnavailable(
+                    f"OpenRouter provider unavailable: {exc}. Проверены модели: [{attempted_text}]"
+                ) from exc
 
-        if last_retryable_error is not None:
-            attempted = ", ".join(candidate_models)
-            raise RuntimeError(
-                "OpenRouter request failed after trying models "
-                f"[{attempted}]: {self._format_status_error(last_retryable_error)}"
-            ) from last_retryable_error
-        raise RuntimeError("OpenRouter request failed without a response")
+        raise OpenRouterError("OpenRouter request failed without a response")
 
     def _create_chat_completion_for_model(
         self,
         *,
         model: str,
-        fallback_models: list[str],
         messages: List[dict[str, Any]],
         tools: List[dict[str, Any]],
     ) -> Any:
@@ -80,26 +104,22 @@ class OpenRouterClient:
                     messages=messages,
                     tools=tools,
                     tool_choice="auto",
-                    extra_body=self._build_extra_body(fallback_models),
+                    extra_body=self._build_extra_body(),
                 )
             except (APIConnectionError, APITimeoutError) as exc:
                 last_error = exc
                 if attempt == self.NETWORK_RETRY_ATTEMPTS - 1:
-                    raise RuntimeError(
+                    raise NetworkError(
                         f"OpenRouter network error: {self._format_network_error(exc)}"
                     ) from exc
             except (RateLimitError, APIStatusError) as exc:
-                if self._should_try_next_model(exc):
-                    raise _TryNextModel(exc) from exc
-                raise RuntimeError(
-                    f"OpenRouter request failed: {self._format_status_error(exc)}"
-                ) from exc
+                raise self._classify_status_error(exc) from exc
 
         if last_error is not None:
-            raise RuntimeError(
+            raise NetworkError(
                 f"OpenRouter network error: {self._format_network_error(last_error)}"
             ) from last_error
-        raise RuntimeError("OpenRouter network error")
+        raise NetworkError("OpenRouter network error")
 
     def _candidate_models(self) -> list[str]:
         candidates = [self.config.model, *self.config.fallback_models]
@@ -113,12 +133,10 @@ class OpenRouterClient:
             result.append(normalized)
         return result
 
-    def _build_extra_body(self, fallback_models: list[str] | None = None) -> dict[str, Any] | None:
+    def _build_extra_body(self) -> dict[str, Any] | None:
         body: dict[str, Any] = {}
         if self.config.reasoning_enabled:
             body["reasoning"] = {"enabled": True}
-        if fallback_models:
-            body["models"] = fallback_models
         return body or None
 
     @staticmethod
@@ -148,25 +166,36 @@ class OpenRouterClient:
             return "таймаут соединения"
         return message
 
-    @staticmethod
-    def _should_try_next_model(exc: Exception) -> bool:
-        if isinstance(exc, RateLimitError):
-            return True
+    def _classify_status_error(self, exc: Exception) -> OpenRouterError:
+        message = self._format_status_error(exc)
+        lowered = message.lower()
         status_code = getattr(exc, "status_code", None)
-        if status_code in {408, 409, 425, 429, 500, 502, 503, 504}:
-            return True
-        message = str(exc).lower()
-        retryable_markers = (
-            "rate limit",
-            "rate-limited",
-            "429",
-            "no healthy upstream",
-            "provider returned error",
-            "temporarily unavailable",
-            "overloaded",
-            "timeout",
-        )
-        return any(marker in message for marker in retryable_markers)
+
+        if status_code == 429 or isinstance(exc, RateLimitError):
+            if "free-models-per-min" in lowered:
+                return RateLimitExceeded(
+                    "достигнут лимит free-models-per-min; повторите позже или настройте платную fallback-модель"
+                )
+            return RateLimitExceeded(f"слишком много запросов: {message}")
+
+        if status_code == 503 and "no healthy upstream" in lowered:
+            return ProviderUnavailable(
+                "no healthy upstream; попробую платную fallback-модель, если она настроена"
+            )
+
+        if status_code in {400, 401, 403, 404}:
+            return ConfigurationError(f"ошибка конфигурации OpenRouter: {message}")
+
+        return OpenRouterError(f"OpenRouter request failed: {message}")
+
+    @staticmethod
+    def _is_free_model(model: str) -> bool:
+        normalized = model.strip().lower()
+        return normalized.endswith(":free") or normalized.endswith("/free")
+
+    @staticmethod
+    def _is_free_models_per_min_error(exc: Exception) -> bool:
+        return "free-models-per-min" in str(exc).lower()
 
     @staticmethod
     def _format_status_error(exc: Exception) -> str:
@@ -178,15 +207,22 @@ class OpenRouterClient:
 
 
 class OpenRouterToolLoop:
-    def __init__(self, client: OpenRouterClient, tool_registry: ToolRegistry) -> None:
+    def __init__(
+        self,
+        client: OpenRouterClient,
+        tool_registry: ToolRegistry,
+        *,
+        max_tool_steps: int = 4,
+    ) -> None:
         self.client = client
         self.tool_registry = tool_registry
+        self.max_tool_steps = max_tool_steps
 
     def run_turn(self, messages: List[dict[str, Any]]) -> Tuple[str, List[dict[str, Any]]]:
         tools = self.tool_registry.list_openrouter_tools()
         local_messages = list(messages)
 
-        for _ in range(6):
+        for _ in range(self.max_tool_steps):
             result = self.client.create_chat_completion(messages=local_messages, tools=tools)
             assistant_message = {
                 "role": result.message.get("role") or "assistant",
@@ -204,7 +240,9 @@ class OpenRouterToolLoop:
                 if content:
                     assistant_message["content"] = content
                     return content, local_messages
-                continue
+                raise RuntimeError(
+                    "Не получил текстовый ответ от модели: пустой ответ без tool calls."
+                )
 
             for tool_call in tool_calls:
                 function = tool_call["function"]

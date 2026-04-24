@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -40,15 +39,11 @@ def _parse_csv_models(value: str) -> list[str]:
 
 
 def _build_openrouter_config() -> OpenRouterConfig:
-    env_api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
-    env_model = os.getenv("OPENROUTER_MODEL", "").strip() or "qwen/qwen-turbo"
-    env_fallback_models = os.getenv("OPENROUTER_FALLBACK_MODELS", "").strip()
-
-    api_key = env_api_key or _prompt("OpenRouter API key")
-    model = _prompt("OpenRouter model", env_model)
+    api_key = _prompt("OpenRouter API key")
+    model = _prompt("OpenRouter model", "qwen/qwen-turbo")
     fallback_models_raw = _prompt(
         "OpenRouter fallback models (comma-separated)",
-        env_fallback_models,
+        "",
     )
     return OpenRouterConfig(
         api_key=api_key,
@@ -61,22 +56,15 @@ def _build_ticktick_credentials() -> TickTickCredentials:
     print()
     print("TickTick provider: ticktick")
     print("Для реального TickTick нужен TickTick Developer app с OAuth credentials.")
-    print("Если часть значений уже есть в env, wizard подхватит их и спросит только недостающее.")
+    print("Эти значения будут сохранены в config.local.json.")
 
-    env_defaults = {
-        "client_id": os.getenv("TICKTICK_CLIENT_ID", "").strip(),
-        "client_secret": os.getenv("TICKTICK_CLIENT_SECRET", "").strip(),
-        "redirect_uri": os.getenv("TICKTICK_REDIRECT_URI", "").strip(),
-        "scope": os.getenv("TICKTICK_SCOPE", "").strip() or "tasks:write tasks:read",
-    }
-
-    client_id = env_defaults["client_id"] or _prompt("TickTick client_id")
-    client_secret = env_defaults["client_secret"] or _prompt("TickTick client_secret")
-    redirect_uri = env_defaults["redirect_uri"] or _prompt(
+    client_id = _prompt("TickTick client_id")
+    client_secret = _prompt("TickTick client_secret")
+    redirect_uri = _prompt(
         "TickTick redirect_uri",
         "http://localhost:8765/callback",
     )
-    scope = env_defaults["scope"] or "tasks:write tasks:read"
+    scope = _prompt("TickTick scope", "tasks:write tasks:read")
 
     return TickTickCredentials(
         provider="ticktick",

@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 from typing import Any
-from zoneinfo import ZoneInfo
-
 import httpx
 
 from app.domain.models import Project, Task, TickTickCredentials
@@ -106,6 +104,27 @@ def test_create_task_uses_documented_endpoint_and_default_inbox(monkeypatch) -> 
             "projectId": "inbox-123",
         },
     }
+
+
+def test_create_task_preserves_resolved_project_id_when_response_omits_it(monkeypatch) -> None:
+    provider = build_provider(inbox_project_id="inbox")
+    monkeypatch.setattr(provider, "resolve_project_id", lambda project_id=None: "real-inbox")
+
+    def fake_request(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        return {
+            "id": "task-1",
+            "title": kwargs["json"]["title"],
+            "status": 0,
+        }
+
+    monkeypatch.setattr(provider, "_request", fake_request)
+    monkeypatch.setattr(
+        provider,
+        "_get_project_by_id",
+        lambda project_id: Project(id=project_id, name="Inbox"),
+    )
+    task = provider.create_task(title="hello world")
+    assert task.project_id == "real-inbox"
 
 
 def test_create_task_normalizes_all_day_local_date(monkeypatch) -> None:
@@ -334,7 +353,7 @@ def test_resolve_default_project_id_falls_back_from_literal_inbox(monkeypatch) -
             Project(id="p2", name="Work", kind="TASK"),
         ],
     )
-    assert provider._resolve_default_project_id() == "p1"
+    assert provider.resolve_default_project_id() == "p1"
 
 
 def test_create_task_uses_real_project_id_when_configured_inbox_is_literal(monkeypatch) -> None:
@@ -369,10 +388,77 @@ def test_create_task_uses_real_project_id_when_configured_inbox_is_literal(monke
     assert recorded["json"]["projectId"] == "real-inbox"
 
 
-def test_resolve_default_project_id_falls_back_when_configured_id_raises_value_error(monkeypatch) -> None:
+def test_create_subtasks_after_create_task_uses_parent_project_automatically(monkeypatch) -> None:
+    provider = build_provider()
+    created_payloads: list[dict[str, Any]] = []
+
+    def fake_request(method: str, path: str, **kwargs: Any) -> Any:
+        if path == "/task" and kwargs["json"].get("parentId") is None:
+            return {
+                "id": "task-parent",
+                "title": kwargs["json"]["title"],
+                "projectId": "project-42",
+                "status": 0,
+            }
+        if path == "/project/project-42/task/task-parent":
+            return {
+                "id": "task-parent",
+                "title": "Parent",
+                "projectId": "project-42",
+                "status": 0,
+            }
+        if path == "/task":
+            created_payloads.append(kwargs["json"])
+            return {
+                "id": f"sub-{len(created_payloads)}",
+                "title": kwargs["json"]["title"],
+                "projectId": kwargs["json"]["projectId"],
+                "parentId": kwargs["json"]["parentId"],
+                "status": 0,
+            }
+        raise AssertionError(f"Unexpected request: {method} {path}")
+
+    monkeypatch.setattr(provider, "_request", fake_request)
+    monkeypatch.setattr(provider, "resolve_project_id", lambda project_id=None: "project-42")
+    monkeypatch.setattr(
+        provider,
+        "_get_project_by_id",
+        lambda project_id: Project(id=project_id, name="Inbox"),
+    )
+
+    parent = provider.create_task(title="Parent")
+    subtasks = provider.create_subtasks(parent.id, ["One", "Two"])
+
+    assert [item.parent_id for item in subtasks] == [parent.id, parent.id]
+    assert [payload["projectId"] for payload in created_payloads] == ["project-42", "project-42"]
+
+
+def test_create_task_with_subtasks_returns_parent_and_subtasks(monkeypatch) -> None:
+    provider = build_provider()
+    parent = Task(id="task-parent", title="Parent", project_id="project-1")
+    subtasks = [
+        Task(id="sub-1", title="One", project_id="project-1", parent_id="task-parent"),
+        Task(id="sub-2", title="Two", project_id="project-1", parent_id="task-parent"),
+    ]
+    monkeypatch.setattr(provider, "create_task", lambda **kwargs: parent)
+    monkeypatch.setattr(provider, "create_subtasks", lambda task_id, titles: subtasks)
+
+    payload = provider.create_task_with_subtasks(title="Parent", subtask_titles=["One", "Two"])
+
+    assert payload["task"] == parent
+    assert payload["subtasks"] == subtasks
+
+
+def test_resolve_default_project_id_falls_back_when_configured_id_raises_value_error(
+    monkeypatch,
+) -> None:
     provider = build_provider(inbox_project_id="inbox")
 
-    monkeypatch.setattr(provider, "_validated_project_id", lambda project_id: (_ for _ in ()).throw(ValueError("bad")))
+    monkeypatch.setattr(
+        provider,
+        "_validated_project_id",
+        lambda project_id: (_ for _ in ()).throw(ValueError("bad")),
+    )
     monkeypatch.setattr(
         provider,
         "_load_projects",
@@ -382,15 +468,15 @@ def test_resolve_default_project_id_falls_back_when_configured_id_raises_value_e
         ],
     )
 
-    assert provider._resolve_default_project_id() == "real-inbox"
+    assert provider.resolve_default_project_id() == "real-inbox"
 
 
 def test_resolve_target_project_id_treats_inbox_alias_as_default(monkeypatch) -> None:
     provider = build_provider(inbox_project_id="inbox")
-    monkeypatch.setattr(provider, "_resolve_default_project_id", lambda: "real-inbox")
+    monkeypatch.setattr(provider, "resolve_default_project_id", lambda: "real-inbox")
 
-    assert provider._resolve_target_project_id("inbox") == "real-inbox"
-    assert provider._resolve_target_project_id("Входящие") == "real-inbox"
+    assert provider.resolve_project_id("inbox") == "real-inbox"
+    assert provider.resolve_project_id("Входящие") == "real-inbox"
 
 
 def test_request_error_keeps_status_endpoint_and_body(monkeypatch) -> None:

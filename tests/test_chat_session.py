@@ -30,7 +30,9 @@ def test_chat_session_adds_runtime_context() -> None:
     messages = [{"role": "system", "content": "base"}]
     updated = ChatSession._upsert_runtime_context(messages, user_timezone="Europe/Moscow")
     runtime_messages = [
-        message for message in updated if str(message.get("content", "")).startswith("Runtime context:")
+        message
+        for message in updated
+        if str(message.get("content", "")).startswith("Runtime context:")
     ]
     assert len(runtime_messages) == 1
     assert "Current local date is" in runtime_messages[0]["content"]
@@ -44,7 +46,9 @@ def test_chat_session_replaces_old_runtime_context() -> None:
     ]
     updated = ChatSession._upsert_runtime_context(messages, user_timezone="Europe/Moscow")
     runtime_messages = [
-        message for message in updated if str(message.get("content", "")).startswith("Runtime context:")
+        message
+        for message in updated
+        if str(message.get("content", "")).startswith("Runtime context:")
     ]
     assert len(runtime_messages) == 1
     assert runtime_messages[0]["content"] != "Runtime context: stale"
@@ -154,10 +158,14 @@ def test_chat_session_does_not_inject_keyword_based_clarify_context(monkeypatch)
     session.run()
 
     assert any(message["role"] == "user" for message in recorded_messages)
-    assert all("Clarify Agent" not in str(message.get("content", "")) for message in recorded_messages)
+    assert all(
+        "Clarify Agent" not in str(message.get("content", "")) for message in recorded_messages
+    )
 
 
 def test_chat_session_formats_network_like_turn_errors() -> None:
-    message = ChatSession._format_turn_error(RuntimeError("OpenRouter network error: ошибка DNS-разрешения имени"))
+    message = ChatSession._format_turn_error(
+        RuntimeError("OpenRouter network error: ошибка DNS-разрешения имени")
+    )
     assert "временной сетевой ошибки" in message
     assert "DNS" in message

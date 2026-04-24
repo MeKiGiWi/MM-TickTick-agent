@@ -71,7 +71,9 @@ def test_run_oauth_login_accepts_full_redirect_url(monkeypatch) -> None:
         "builtins.input",
         lambda _: "https://example.com/callback?code=oauth-code&state=fixed-state",
     )
-    monkeypatch.setattr("app.providers.ticktick.oauth.secrets.token_urlsafe", lambda _: "fixed-state")
+    monkeypatch.setattr(
+        "app.providers.ticktick.oauth.secrets.token_urlsafe", lambda _: "fixed-state"
+    )
     result = run_oauth_login(credentials, oauth_client=oauth_client, open_browser=False)
     assert result.access_token == "ticktick-token"
     assert oauth_client.exchanged_payload["code"] == "oauth-code"
@@ -92,7 +94,9 @@ def test_run_oauth_login_prefers_automatic_callback(monkeypatch) -> None:
             "state": "fixed-state",
         },
     )
-    monkeypatch.setattr("app.providers.ticktick.oauth.secrets.token_urlsafe", lambda _: "fixed-state")
+    monkeypatch.setattr(
+        "app.providers.ticktick.oauth.secrets.token_urlsafe", lambda _: "fixed-state"
+    )
     monkeypatch.setattr(
         "builtins.input",
         lambda _: (_ for _ in ()).throw(AssertionError("manual input should not be used")),
@@ -116,7 +120,17 @@ def test_ensure_config_runs_oauth_for_ticktick(monkeypatch, tmp_path) -> None:
     from app.config.setup import ensure_config
 
     answers = iter(
-        ["or-test-key", "", "", "ticktick", "client-id", "client-secret", "https://example.com/callback", "inbox"]
+        [
+            "or-test-key",
+            "qwen/qwen-turbo",
+            "",
+            "ticktick",
+            "client-id",
+            "client-secret",
+            "https://example.com/callback",
+            "tasks:write tasks:read",
+            "inbox",
+        ]
     )
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
 
@@ -130,14 +144,23 @@ def test_ensure_config_runs_oauth_for_ticktick(monkeypatch, tmp_path) -> None:
     assert config.ticktick.auth_state == "saved-state"
 
 
-def test_ensure_config_uses_env_for_ticktick_credentials(monkeypatch, tmp_path) -> None:
+def test_ensure_config_prompts_for_ticktick_credentials(monkeypatch, tmp_path) -> None:
     from app.config.setup import ensure_config
 
-    answers = iter(["or-test-key", "", "", "ticktick", "inbox"])
+    answers = iter(
+        [
+            "or-test-key",
+            "qwen/qwen-turbo",
+            "",
+            "ticktick",
+            "prompt-client-id",
+            "prompt-client-secret",
+            "https://example.com/callback",
+            "tasks:write tasks:read",
+            "inbox",
+        ]
+    )
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
-    monkeypatch.setenv("TICKTICK_CLIENT_ID", "env-client-id")
-    monkeypatch.setenv("TICKTICK_CLIENT_SECRET", "env-client-secret")
-    monkeypatch.setenv("TICKTICK_REDIRECT_URI", "https://example.com/callback")
     captured_credentials: dict[str, str] = {}
 
     class DummyOAuthResult:
@@ -154,13 +177,15 @@ def test_ensure_config_uses_env_for_ticktick_credentials(monkeypatch, tmp_path) 
     config = ensure_config(tmp_path)
     assert config.ticktick.access_token == "saved-token"
     assert captured_credentials == {
-        "client_id": "env-client-id",
-        "client_secret": "env-client-secret",
+        "client_id": "prompt-client-id",
+        "client_secret": "prompt-client-secret",
         "redirect_uri": "https://example.com/callback",
     }
 
 
-def test_ensure_config_existing_ticktick_config_without_token_runs_oauth(monkeypatch, tmp_path) -> None:
+def test_ensure_config_existing_ticktick_config_without_token_runs_oauth(
+    monkeypatch, tmp_path
+) -> None:
     from app.config.setup import ensure_config
     from app.domain.models import AppConfig, OpenRouterConfig
     from app.storage.config_store import ConfigStore
@@ -187,7 +212,9 @@ def test_ensure_config_existing_ticktick_config_without_token_runs_oauth(monkeyp
     assert config.ticktick.access_token == "saved-token"
 
 
-def test_ensure_config_existing_ticktick_config_with_token_skips_oauth(monkeypatch, tmp_path) -> None:
+def test_ensure_config_existing_ticktick_config_with_token_skips_oauth(
+    monkeypatch, tmp_path
+) -> None:
     from app.config.setup import ensure_config
     from app.domain.models import AppConfig, OpenRouterConfig
     from app.storage.config_store import ConfigStore

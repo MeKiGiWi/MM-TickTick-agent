@@ -5,8 +5,7 @@ from typing import Any, Protocol
 
 
 class ToolHandler(Protocol):
-    def __call__(self, **kwargs: Any) -> Any:
-        ...
+    def __call__(self, **kwargs: Any) -> Any: ...
 
 
 @dataclass

@@ -16,21 +16,16 @@ def test_setup_creates_local_config(monkeypatch, tmp_path: Path) -> None:
     assert (tmp_path / "config.local.json").exists()
 
 
-def test_setup_uses_openrouter_env(monkeypatch, tmp_path: Path) -> None:
-    answers = iter(["", "", "mock"])
-    monkeypatch.setattr("builtins.input", lambda _: next(answers))
-    monkeypatch.setenv("OPENROUTER_API_KEY", "env-openrouter-key")
-    monkeypatch.setenv("OPENROUTER_MODEL", "qwen/qwen-turbo")
-    monkeypatch.setenv(
-        "OPENROUTER_FALLBACK_MODELS",
-        "openai/gpt-4o-mini, anthropic/claude-3.5-sonnet , openai/gpt-4o-mini",
+def test_setup_prompts_for_openrouter_values_without_env_fallback(
+    monkeypatch, tmp_path: Path
+) -> None:
+    answers = iter(
+        ["prompt-key", "qwen/qwen-turbo", "openai/gpt-4o-mini, openai/gpt-4o-mini", "mock"]
     )
+    monkeypatch.setattr("builtins.input", lambda _: next(answers))
     monkeypatch.setenv("TZ", "Europe/Moscow")
     config = ensure_config(tmp_path)
-    assert config.openrouter.api_key == "env-openrouter-key"
+    assert config.openrouter.api_key == "prompt-key"
     assert config.openrouter.model == "qwen/qwen-turbo"
-    assert config.openrouter.fallback_models == [
-        "openai/gpt-4o-mini",
-        "anthropic/claude-3.5-sonnet",
-    ]
+    assert config.openrouter.fallback_models == ["openai/gpt-4o-mini"]
     assert config.user_timezone == "Europe/Moscow"

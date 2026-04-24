@@ -5,18 +5,10 @@ services:
     tty: true
     ports:
       - "8765:8765"
-    env_file:
-      - .env
     environment:
       PYTHONUTF8: "1"
       LANG: C.UTF-8
       LC_ALL: C.UTF-8
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-qwen/qwen-turbo}
-      TICKTICK_CLIENT_ID: ${TICKTICK_CLIENT_ID:-}
-      TICKTICK_CLIENT_SECRET: ${TICKTICK_CLIENT_SECRET:-}
-      TICKTICK_REDIRECT_URI: ${TICKTICK_REDIRECT_URI:-http://localhost:8765/callback}
-      TICKTICK_SCOPE: ${TICKTICK_SCOPE:-tasks:write tasks:read}
     volumes:
       - .:/app
     command: python -m app

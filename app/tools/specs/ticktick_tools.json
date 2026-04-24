@@ -3,41 +3,41 @@
   "tools": [
     {
       "name": "create_task",
-      "description": "Creates a new TickTick task. Use for adding a task, reminder, or to-do item.",
+      "description": "Creates one TickTick task in a project. Omit project_id to use the configured default project.",
       "parameters": {
         "type": "object",
         "properties": {
           "title": {
             "type": "string",
-            "description": "Task title."
+            "description": "Task title shown in TickTick."
           },
           "project_id": {
             "type": "string",
-            "description": "Optional TickTick project identifier. Omit to use the configured default/inbox project."
+            "description": "Optional project reference. May be a real project id, a project name, or a default-project alias such as inbox/default/входящие."
           },
           "content": {
             "type": "string",
-            "description": "Optional task notes or description."
+            "description": "Optional task notes or details."
           },
           "due_date": {
             "type": "string",
-            "description": "Due date or datetime in ISO-like format understood by TickTick, for example 2026-04-24 or 2026-04-24T09:00:00+0300."
+            "description": "Optional due date or datetime. Relative dates should already be resolved before calling the tool."
           },
           "start_date": {
             "type": "string",
-            "description": "Optional start date or datetime in ISO-like format."
+            "description": "Optional start date or datetime."
           },
           "is_all_day": {
             "type": "boolean",
-            "description": "Whether the task is an all-day task."
+            "description": "Whether the task should be treated as an all-day task."
           },
           "time_zone": {
             "type": "string",
-            "description": "IANA timezone name to use for task date normalization, for example Europe/Moscow."
+            "description": "Optional IANA timezone used to normalize due_date and start_date."
           },
           "priority": {
             "type": "integer",
-            "description": "Optional TickTick priority value.",
+            "description": "TickTick priority value.",
             "enum": [0, 1, 3, 5]
           }
         },
@@ -46,8 +46,59 @@
       }
     },
     {
+      "name": "create_task_with_subtasks",
+      "description": "Creates a parent task and its subtasks in one backend operation. Use this when the user asks for a task together with subtasks.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "Parent task title."
+          },
+          "subtask_titles": {
+            "type": "array",
+            "description": "Titles of subtasks to create under the new parent task.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "project_id": {
+            "type": "string",
+            "description": "Optional project reference for the parent task. Omit to use the configured default project."
+          },
+          "content": {
+            "type": "string",
+            "description": "Optional notes for the parent task."
+          },
+          "due_date": {
+            "type": "string",
+            "description": "Optional due date or datetime for the parent task."
+          },
+          "start_date": {
+            "type": "string",
+            "description": "Optional start date or datetime for the parent task."
+          },
+          "is_all_day": {
+            "type": "boolean",
+            "description": "Whether the parent task is all-day."
+          },
+          "time_zone": {
+            "type": "string",
+            "description": "Optional IANA timezone used to normalize parent task dates."
+          },
+          "priority": {
+            "type": "integer",
+            "description": "TickTick priority value for the parent task.",
+            "enum": [0, 1, 3, 5]
+          }
+        },
+        "required": ["title", "subtask_titles"],
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "list_tasks",
-      "description": "Lists or searches TickTick tasks by status, project, or text query.",
+      "description": "Lists TickTick tasks and can filter by status, project, or search text.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -58,11 +109,11 @@
           },
           "project_id": {
             "type": "string",
-            "description": "Optional project identifier."
+            "description": "Optional project reference to limit the task list."
           },
           "search": {
             "type": "string",
-            "description": "Optional case-insensitive text query matched against task title and content."
+            "description": "Optional case-insensitive search matched against task title and notes."
           }
         },
         "additionalProperties": false
@@ -70,13 +121,13 @@
     },
     {
       "name": "get_task_details",
-      "description": "Gets full details for one TickTick task by task_id.",
+      "description": "Gets one TickTick task with its current fields.",
       "parameters": {
         "type": "object",
         "properties": {
           "task_id": {
             "type": "string",
-            "description": "TickTick task identifier."
+            "description": "Task identifier."
           }
         },
         "required": ["task_id"],
@@ -85,7 +136,7 @@
     },
     {
       "name": "create_subtasks",
-      "description": "Creates subtasks under an existing TickTick task.",
+      "description": "Creates subtasks under an existing parent task. The backend resolves the parent's project automatically.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -95,7 +146,7 @@
           },
           "titles": {
             "type": "array",
-            "description": "Subtask titles to create.",
+            "description": "Titles of subtasks to create under the parent task.",
             "items": {
               "type": "string"
             }
@@ -107,13 +158,13 @@
     },
     {
       "name": "update_task",
-      "description": "Updates editable fields of a TickTick task by task_id.",
+      "description": "Updates editable fields of one TickTick task.",
       "parameters": {
         "type": "object",
         "properties": {
           "task_id": {
             "type": "string",
-            "description": "TickTick task identifier."
+            "description": "Task identifier."
           },
           "title": {
             "type": "string",
@@ -121,7 +172,7 @@
           },
           "content": {
             "type": "string",
-            "description": "New task notes or description."
+            "description": "New task notes."
           },
           "due_date": {
             "type": "string",
@@ -133,11 +184,11 @@
           },
           "is_all_day": {
             "type": "boolean",
-            "description": "Whether the task should be treated as all-day."
+            "description": "Whether the task should be all-day."
           },
           "time_zone": {
             "type": "string",
-            "description": "IANA timezone name used for date normalization."
+            "description": "IANA timezone used to normalize new date fields."
           },
           "priority": {
             "type": "integer",
@@ -151,7 +202,7 @@
           },
           "project_id": {
             "type": "string",
-            "description": "Optional new project identifier."
+            "description": "Optional target project reference if the task should move."
           }
         },
         "required": ["task_id"],
@@ -160,13 +211,13 @@
     },
     {
       "name": "update_task_by_search",
-      "description": "Searches open tasks by text and updates the matching task only when the result is unambiguous.",
+      "description": "Finds one open task by text and updates it only when the match is reliable.",
       "parameters": {
         "type": "object",
         "properties": {
           "search": {
             "type": "string",
-            "description": "Text query used to find the task by title or content."
+            "description": "Search text used to find the task by title or notes."
           },
           "title": {
             "type": "string",
@@ -174,7 +225,7 @@
           },
           "content": {
             "type": "string",
-            "description": "New task notes or description."
+            "description": "New task notes."
           },
           "due_date": {
             "type": "string",
@@ -186,11 +237,11 @@
           },
           "is_all_day": {
             "type": "boolean",
-            "description": "Whether the task should be treated as all-day."
+            "description": "Whether the task should be all-day."
           },
           "time_zone": {
             "type": "string",
-            "description": "IANA timezone name used for date normalization."
+            "description": "IANA timezone used to normalize new date fields."
           },
           "priority": {
             "type": "integer",
@@ -204,19 +255,19 @@
           },
           "project_id": {
             "type": "string",
-            "description": "Optional project filter for the search or target project if moving the task."
+            "description": "Optional project reference used as a search scope or move target."
           },
           "prefer_due_date": {
             "type": "string",
-            "description": "Optional preferred due date in YYYY-MM-DD when several tasks match."
+            "description": "Optional preferred local due date in YYYY-MM-DD when several tasks match."
           },
           "prefer_today": {
             "type": "boolean",
-            "description": "Prefer tasks due today when several tasks match."
+            "description": "Prefer a task due today when several tasks match."
           },
           "exact_title": {
             "type": "boolean",
-            "description": "Require exact title match before updating.",
+            "description": "Require an exact title match before updating.",
             "default": false
           }
         },
@@ -226,7 +277,7 @@
     },
     {
       "name": "list_projects",
-      "description": "Lists available TickTick projects and can optionally filter them by query.",
+      "description": "Lists TickTick projects and can filter them by id or name.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -240,7 +291,7 @@
     },
     {
       "name": "list_upcoming_tasks",
-      "description": "Lists open tasks due within a date window, sorted by local due date.",
+      "description": "Lists open tasks due soon, using localized dates for sorting and presentation.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -256,17 +307,17 @@
           },
           "include_overdue": {
             "type": "boolean",
-            "description": "Whether to include overdue tasks.",
+            "description": "Whether overdue tasks should be included.",
             "default": false
           },
           "include_without_due_date": {
             "type": "boolean",
-            "description": "Whether to append tasks without due dates after dated tasks.",
+            "description": "Whether tasks without a due date should be appended after dated tasks.",
             "default": false
           },
           "project_id": {
             "type": "string",
-            "description": "Optional project identifier."
+            "description": "Optional project reference to limit the list."
           }
         },
         "additionalProperties": false
@@ -274,17 +325,17 @@
     },
     {
       "name": "move_task",
-      "description": "Moves a task to another TickTick project.",
+      "description": "Moves one task to another project.",
       "parameters": {
         "type": "object",
         "properties": {
           "task_id": {
             "type": "string",
-            "description": "TickTick task identifier."
+            "description": "Task identifier."
           },
           "project_id": {
             "type": "string",
-            "description": "Destination project identifier."
+            "description": "Destination project reference."
           }
         },
         "required": ["task_id", "project_id"],
@@ -293,13 +344,13 @@
     },
     {
       "name": "mark_complete",
-      "description": "Marks a TickTick task as completed.",
+      "description": "Marks one task as completed.",
       "parameters": {
         "type": "object",
         "properties": {
           "task_id": {
             "type": "string",
-            "description": "TickTick task identifier."
+            "description": "Task identifier."
           }
         },
         "required": ["task_id"],

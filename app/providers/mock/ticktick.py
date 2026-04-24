@@ -47,6 +47,24 @@ class MockTickTickProvider(TickTickProvider):
         task.project_name = project.name if project else None
         return task
 
+    @staticmethod
+    def is_default_project_alias(value: str) -> bool:
+        return value.strip().lower() in {"", "inbox", "default", "входящие"}
+
+    def resolve_default_project_id(self) -> str:
+        return "inbox"
+
+    def resolve_project_id(self, project_ref: Optional[str] = None) -> str:
+        value = (project_ref or "").strip()
+        if not value or self.is_default_project_alias(value):
+            return self.resolve_default_project_id()
+        if value in self.projects:
+            return value
+        for project in self.projects.values():
+            if project.name.lower() == value.lower():
+                return project.id
+        raise ValueError(f"Проект '{value}' не найден.")
+
     def create_task(
         self,
         *,
@@ -59,9 +77,7 @@ class MockTickTickProvider(TickTickProvider):
         time_zone: Optional[str] = None,
         priority: Optional[int] = None,
     ) -> Task:
-        target_project_id = project_id or "inbox"
-        if target_project_id not in self.projects:
-            raise ValueError(f"Проект '{target_project_id}' не найден.")
+        target_project_id = self.resolve_project_id(project_id)
         self.counter += 1
         task = Task(
             id=f"task-{self.counter}",
@@ -108,11 +124,38 @@ class MockTickTickProvider(TickTickProvider):
                 title=title,
                 project_id=parent.project_id,
                 project_name=self.projects[parent.project_id].name,
+                parent_id=parent.id,
             )
             parent.subtasks.append(subtask)
             self.tasks[subtask.id] = subtask
             created.append(deepcopy(self._attach_project_name(subtask)))
         return created
+
+    def create_task_with_subtasks(
+        self,
+        *,
+        title: str,
+        subtask_titles: list[str],
+        project_id: Optional[str] = None,
+        content: Optional[str] = None,
+        due_date: Optional[str] = None,
+        start_date: Optional[str] = None,
+        is_all_day: Optional[bool] = None,
+        time_zone: Optional[str] = None,
+        priority: Optional[int] = None,
+    ) -> dict[str, object]:
+        task = self.create_task(
+            title=title,
+            project_id=project_id,
+            content=content,
+            due_date=due_date,
+            start_date=start_date,
+            is_all_day=is_all_day,
+            time_zone=time_zone,
+            priority=priority,
+        )
+        subtasks = self.create_subtasks(task.id, subtask_titles)
+        return {"task": task, "subtasks": subtasks}
 
     def update_task(self, task_id: str, fields: dict[str, object]) -> Task:
         task = self.tasks[task_id]
