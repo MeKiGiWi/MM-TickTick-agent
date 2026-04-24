@@ -184,7 +184,7 @@ class TickTickApiProvider(TickTickProvider):
         if configured:
             try:
                 return self._validated_project_id(configured)
-            except httpx.HTTPStatusError:
+            except (ValueError, httpx.HTTPStatusError):
                 pass
 
         projects = self._load_projects()
@@ -208,9 +208,11 @@ class TickTickApiProvider(TickTickProvider):
 
     def _resolve_target_project_id(self, project_id: Optional[str]) -> str:
         target = (project_id or "").strip()
-        if target:
-            return self._validated_project_id(target)
-        return self._resolve_default_project_id()
+        if not target:
+            return self._resolve_default_project_id()
+        if target.lower() in {"inbox", "входящие"}:
+            return self._resolve_default_project_id()
+        return self._validated_project_id(target)
 
     def _search_task_project_id(self, task_id: str) -> Optional[str]:
         cached = self._task_project_cache.get(task_id)

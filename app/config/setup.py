@@ -41,7 +41,7 @@ def _parse_csv_models(value: str) -> list[str]:
 
 def _build_openrouter_config() -> OpenRouterConfig:
     env_api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
-    env_model = os.getenv("OPENROUTER_MODEL", "").strip() or "openrouter/free"
+    env_model = os.getenv("OPENROUTER_MODEL", "").strip() or "qwen/qwen-turbo"
     env_fallback_models = os.getenv("OPENROUTER_FALLBACK_MODELS", "").strip()
 
     api_key = env_api_key or _prompt("OpenRouter API key")

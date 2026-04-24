@@ -15,6 +15,8 @@ from app.utils.timezone import resolve_timezone, timezone_label
 
 class ChatSession:
     RUNTIME_CONTEXT_PREFIX = "Runtime context:"
+    USER_PROMPT = "🙂 you> "
+    AGENT_PROMPT = "🤖 agent> "
 
     def __init__(self, root: Optional[Path] = None) -> None:
         self.root = root or Path(__file__).resolve().parents[2]
@@ -111,7 +113,7 @@ class ChatSession:
     def run(self) -> None:
         print("TickTick chat agent запущен. Напишите сообщение. Для выхода: exit")
         while True:
-            user_input = self._sanitize_text(input("you> ").strip())
+            user_input = self._sanitize_text(input(self.USER_PROMPT).strip())
             if user_input.lower() in {"exit", "quit"}:
                 print("bye")
                 break
@@ -135,4 +137,4 @@ class ChatSession:
             if not answer:
                 answer = "Не получил текстовый ответ от модели."
             print()
-            print(f"agent> {answer}")
+            print(f"{self.AGENT_PROMPT}{answer}")

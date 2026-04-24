@@ -85,7 +85,7 @@ def test_chat_session_prints_blank_line_before_agent_answer(monkeypatch, capsys)
     session.run()
 
     output = capsys.readouterr().out
-    assert "\n\nagent> Ответ пользователю\n" in output
+    assert "\n\n🤖 agent> Ответ пользователю\n" in output
 
 
 def test_chat_session_strips_answer_and_prints_fallback_for_empty(monkeypatch, capsys) -> None:
@@ -104,7 +104,34 @@ def test_chat_session_strips_answer_and_prints_fallback_for_empty(monkeypatch, c
     session.run()
 
     output = capsys.readouterr().out
-    assert "agent> Не получил текстовый ответ от модели." in output
+    assert "🤖 agent> Не получил текстовый ответ от модели." in output
+
+
+def test_chat_session_uses_smiley_prompts(monkeypatch, capsys) -> None:
+    session = ChatSession.__new__(ChatSession)
+    session.provider = MockTickTickProvider()
+    session.registry = ToolRegistry(session.provider, user_timezone="Europe/Moscow")
+    session.llm = SimpleNamespace(
+        run_turn=lambda messages: (
+            "Ответ пользователю",
+            messages + [{"role": "assistant", "content": "Ответ пользователю"}],
+        )
+    )
+    session.config = SimpleNamespace(user_timezone="Europe/Moscow")
+    session.messages = [{"role": "system", "content": "base"}]
+
+    prompts: list[str] = []
+    answers = iter(["привет", "exit"])
+
+    def fake_input(prompt: str) -> str:
+        prompts.append(prompt)
+        return next(answers)
+
+    monkeypatch.setattr("builtins.input", fake_input)
+
+    session.run()
+
+    assert prompts == ["🙂 you> ", "🙂 you> "]
 
 
 def test_chat_session_does_not_inject_keyword_based_clarify_context(monkeypatch) -> None:

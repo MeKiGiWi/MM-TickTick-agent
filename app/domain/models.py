@@ -79,7 +79,7 @@ class TickTickCredentials(BaseModel):
 class OpenRouterConfig(BaseModel):
     api_key: str
     base_url: str = "https://openrouter.ai/api/v1"
-    model: str = "openrouter/free"
+    model: str = "qwen/qwen-turbo"
     fallback_models: list[str] = Field(default_factory=list)
     reasoning_enabled: bool = True
 

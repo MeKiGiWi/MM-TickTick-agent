@@ -369,6 +369,30 @@ def test_create_task_uses_real_project_id_when_configured_inbox_is_literal(monke
     assert recorded["json"]["projectId"] == "real-inbox"
 
 
+def test_resolve_default_project_id_falls_back_when_configured_id_raises_value_error(monkeypatch) -> None:
+    provider = build_provider(inbox_project_id="inbox")
+
+    monkeypatch.setattr(provider, "_validated_project_id", lambda project_id: (_ for _ in ()).throw(ValueError("bad")))
+    monkeypatch.setattr(
+        provider,
+        "_load_projects",
+        lambda: [
+            Project(id="real-inbox", name="Inbox", kind="TASK"),
+            Project(id="work", name="Work", kind="TASK"),
+        ],
+    )
+
+    assert provider._resolve_default_project_id() == "real-inbox"
+
+
+def test_resolve_target_project_id_treats_inbox_alias_as_default(monkeypatch) -> None:
+    provider = build_provider(inbox_project_id="inbox")
+    monkeypatch.setattr(provider, "_resolve_default_project_id", lambda: "real-inbox")
+
+    assert provider._resolve_target_project_id("inbox") == "real-inbox"
+    assert provider._resolve_target_project_id("Входящие") == "real-inbox"
+
+
 def test_request_error_keeps_status_endpoint_and_body(monkeypatch) -> None:
     provider = build_provider()
 

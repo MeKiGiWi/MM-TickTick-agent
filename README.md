@@ -62,7 +62,7 @@ docker compose run --rm app
   "openrouter": {
     "api_key": "or-your-openrouter-key",
     "base_url": "https://openrouter.ai/api/v1",
-    "model": "openrouter/free",
+    "model": "qwen/qwen-turbo",
     "fallback_models": [
       "openai/gpt-4o-mini",
       "anthropic/claude-3.5-sonnet"
@@ -75,7 +75,7 @@ docker compose run --rm app
 }
 ```
 
-`fallback_models` прокидываются в OpenRouter как `extra_body.models`, поэтому при `429`/rate-limit и других ошибках роутер может автоматически перейти на следующую модель. Поверх этого клиент CLI дополнительно перебирает список локально, если OpenRouter всё же вернул ошибку наружу.
+`fallback_models` прокидываются в OpenRouter как `extra_body.models`, поэтому при `429`, retryable `5xx` и provider-health ошибках вроде `503 no healthy upstream` роутер может автоматически перейти на следующую модель. Поверх этого клиент CLI дополнительно перебирает список локально, если OpenRouter всё же вернул ошибку наружу, и делает один сетевой ретрай при временном обрыве соединения.
 
 Для реального TickTick provider нужны `client_id`, `client_secret`, `redirect_uri` и `access_token` или OAuth setup через CLI.
 

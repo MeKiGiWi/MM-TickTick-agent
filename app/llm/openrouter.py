@@ -23,6 +23,8 @@ class _TryNextModel(Exception):
 
 
 class OpenRouterClient:
+    NETWORK_RETRY_ATTEMPTS = 2
+
     def __init__(self, config: OpenRouterConfig) -> None:
         self.config = config
         self.client = OpenAI(
@@ -37,7 +39,7 @@ class OpenRouterClient:
         messages: List[dict[str, Any]],
         tools: List[dict[str, Any]],
     ) -> ChatCompletionResult:
-        last_rate_limit_error: Exception | None = None
+        last_retryable_error: Exception | None = None
         candidate_models = self._candidate_models()
         for model_index, model in enumerate(candidate_models):
             try:
@@ -51,15 +53,15 @@ class OpenRouterClient:
                 message = self._extract_message(payload)
                 return ChatCompletionResult(message=message, raw_response=payload)
             except _TryNextModel as exc:
-                last_rate_limit_error = exc.error
+                last_retryable_error = exc.error
                 continue
 
-        if last_rate_limit_error is not None:
+        if last_retryable_error is not None:
             attempted = ", ".join(candidate_models)
             raise RuntimeError(
-                "OpenRouter rate limit error after trying models "
-                f"[{attempted}]: {self._format_status_error(last_rate_limit_error)}"
-            ) from last_rate_limit_error
+                "OpenRouter request failed after trying models "
+                f"[{attempted}]: {self._format_status_error(last_retryable_error)}"
+            ) from last_retryable_error
         raise RuntimeError("OpenRouter request failed without a response")
 
     def _create_chat_completion_for_model(
@@ -71,7 +73,7 @@ class OpenRouterClient:
         tools: List[dict[str, Any]],
     ) -> Any:
         last_error: Exception | None = None
-        for attempt in range(3):
+        for attempt in range(self.NETWORK_RETRY_ATTEMPTS):
             try:
                 return self.client.chat.completions.create(
                     model=model,
@@ -82,7 +84,7 @@ class OpenRouterClient:
                 )
             except (APIConnectionError, APITimeoutError) as exc:
                 last_error = exc
-                if attempt == 2:
+                if attempt == self.NETWORK_RETRY_ATTEMPTS - 1:
                     raise RuntimeError(
                         f"OpenRouter network error: {self._format_network_error(exc)}"
                     ) from exc
@@ -151,10 +153,20 @@ class OpenRouterClient:
         if isinstance(exc, RateLimitError):
             return True
         status_code = getattr(exc, "status_code", None)
-        if status_code == 429:
+        if status_code in {408, 409, 425, 429, 500, 502, 503, 504}:
             return True
         message = str(exc).lower()
-        return "rate limit" in message or "rate-limited" in message or "429" in message
+        retryable_markers = (
+            "rate limit",
+            "rate-limited",
+            "429",
+            "no healthy upstream",
+            "provider returned error",
+            "temporarily unavailable",
+            "overloaded",
+            "timeout",
+        )
+        return any(marker in message for marker in retryable_markers)
 
     @staticmethod
     def _format_status_error(exc: Exception) -> str:

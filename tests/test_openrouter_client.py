@@ -4,7 +4,7 @@ from typing import Any
 
 import httpx
 import pytest
-from openai import RateLimitError
+from openai import APIConnectionError, APIStatusError, RateLimitError
 
 from app.domain.models import OpenRouterConfig
 from app.llm.openrouter import OpenRouterClient
@@ -106,9 +106,60 @@ def test_openrouter_client_reports_exhausted_rate_limit_chain() -> None:
         client.create_chat_completion(messages=[{"role": "user", "content": "hello"}], tools=[])
 
     message = str(exc_info.value)
-    assert "rate limit error after trying models" in message
+    assert "request failed after trying models" in message
     assert "qwen/qwen3-coder:free" in message
     assert "openai/gpt-4o-mini" in message
+
+
+def test_openrouter_client_tries_next_model_on_retryable_503() -> None:
+    request = httpx.Request("POST", "https://openrouter.ai/api/v1/chat/completions")
+    status_error = APIStatusError(
+        "Provider returned error: no healthy upstream",
+        response=httpx.Response(503, request=request),
+        body=None,
+    )
+    client = OpenRouterClient(
+        OpenRouterConfig(
+            api_key="test-key",
+            model="qwen/qwen3-coder:free",
+            fallback_models=["openai/gpt-4o-mini"],
+        )
+    )
+    fake_api = FakeCompletionsAPI([status_error, FakeResponse("Готово после 503", "openai/gpt-4o-mini")])
+    client.client = type(
+        "FakeOpenAI",
+        (),
+        {"chat": type("FakeChat", (), {"completions": fake_api})()},
+    )()
+
+    result = client.create_chat_completion(messages=[{"role": "user", "content": "hello"}], tools=[])
+
+    assert result.message["content"] == "Готово после 503"
+    assert [call["model"] for call in fake_api.calls] == [
+        "qwen/qwen3-coder:free",
+        "openai/gpt-4o-mini",
+    ]
+
+
+def test_openrouter_client_retries_network_error_once_then_recovers() -> None:
+    request = httpx.Request("POST", "https://openrouter.ai/api/v1/chat/completions")
+    client = OpenRouterClient(OpenRouterConfig(api_key="test-key", model="openrouter/free"))
+    fake_api = FakeCompletionsAPI(
+        [
+            APIConnectionError(message="Temporary failure in name resolution", request=request),
+            FakeResponse("После ретрая", "openrouter/free"),
+        ]
+    )
+    client.client = type(
+        "FakeOpenAI",
+        (),
+        {"chat": type("FakeChat", (), {"completions": fake_api})()},
+    )()
+
+    result = client.create_chat_completion(messages=[{"role": "user", "content": "hello"}], tools=[])
+
+    assert result.message["content"] == "После ретрая"
+    assert len(fake_api.calls) == 2
 
 
 def test_openrouter_client_builds_extra_body_without_reasoning_when_disabled() -> None:

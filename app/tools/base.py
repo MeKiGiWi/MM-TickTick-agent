@@ -21,7 +21,7 @@ class ToolSpec:
         if isinstance(value, dict):
             sanitized: dict[str, Any] = {}
             for key, item in value.items():
-                if key in {"required", "additionalProperties", "default"}:
+                if key in {"additionalProperties", "default"}:
                     continue
                 sanitized[key] = cls._sanitize_openrouter_schema(item)
             return sanitized

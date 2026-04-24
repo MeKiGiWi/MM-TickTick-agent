@@ -19,7 +19,7 @@ def test_registry_loads_tools_from_json_specs() -> None:
     create_task = next(tool["function"] for tool in tools if tool["function"]["name"] == "create_task")
     assert create_task["description"] == "Creates a new TickTick task. Use for adding a task, reminder, or to-do item."
     assert "additionalProperties" not in create_task["parameters"]
-    assert "required" not in create_task["parameters"]
+    assert create_task["parameters"]["required"] == ["title"]
 
 
 def test_create_task_tool_uses_mock_provider_defaults() -> None:
@@ -151,9 +151,19 @@ def test_openrouter_tools_strip_provider_incompatible_schema_keywords() -> None:
         for tool in registry.list_openrouter_tools()
         if tool["function"]["name"] == "update_task_by_search"
     )
-    assert "required" not in update_task_by_search["parameters"]
+    assert update_task_by_search["parameters"]["required"] == ["search"]
     assert "additionalProperties" not in update_task_by_search["parameters"]
     assert "default" not in update_task_by_search["parameters"]["properties"]["exact_title"]
+
+
+def test_create_subtasks_schema_keeps_required_fields() -> None:
+    registry = ToolRegistry(MockTickTickProvider(), user_timezone="Europe/Moscow")
+    create_subtasks = next(
+        tool["function"]
+        for tool in registry.list_openrouter_tools()
+        if tool["function"]["name"] == "create_subtasks"
+    )
+    assert create_subtasks["parameters"]["required"] == ["task_id", "titles"]
 
 
 def test_update_task_updates_with_explicit_arguments() -> None:
