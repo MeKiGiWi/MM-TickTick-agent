@@ -51,7 +51,11 @@ class TickTickProjectsService:
     def get_project_by_id(self, project_id: str) -> Project:
         if project_id in self.projects_cache:
             return self.projects_cache[project_id]
-        project = Project.model_validate(self.api.request("GET", f"/project/{project_id}"))
+        payload = self.api.request("GET", f"/project/{project_id}")
+        if not payload and self.looks_like_default_project_id(project_id):
+            project = Project(id=project_id, name="Inbox", kind="TASK")
+        else:
+            project = Project.model_validate(payload)
         self.projects_cache[project.id] = project
         if self.looks_like_default_project_id(project.id) or is_default_project_alias(project.name):
             self.remember_default_project_id(project.id)

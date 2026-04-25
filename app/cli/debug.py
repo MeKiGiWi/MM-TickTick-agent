@@ -1,9 +1,11 @@
 import json
+import os
 from typing import Any
 
 
 class ToolDebugPrinter:
     SYSTEM_INFO_PROMPT = "ℹ️ system> "
+    DEFAULT_MODE = "names"
 
     @staticmethod
     def pretty_json(value: Any) -> str:
@@ -17,7 +19,9 @@ class ToolDebugPrinter:
         cls,
         previous_messages: list[dict[str, object]],
         updated_messages: list[dict[str, object]],
+        mode: str | None = None,
     ) -> list[str]:
+        normalized_mode = (mode or cls.DEFAULT_MODE).strip().casefold()
         new_messages = updated_messages[len(previous_messages) :]
         lines: list[str] = []
         for message in new_messages:
@@ -31,15 +35,17 @@ class ToolDebugPrinter:
                     except Exception:
                         parsed_arguments = arguments
                     lines.append(f"tool call: {name}")
-                    lines.append(cls.pretty_json(parsed_arguments))
+                    if normalized_mode == "full":
+                        lines.append(cls.pretty_json(parsed_arguments))
             elif message.get("role") == "tool":
-                lines.append(f"tool result: {message.get('name', 'unknown')}")
-                content = message.get("content", "")
-                try:
-                    parsed_content = json.loads(content) if isinstance(content, str) else content
-                except Exception:
-                    parsed_content = content
-                lines.append(cls.pretty_json(parsed_content))
+                if normalized_mode == "full":
+                    lines.append(f"tool result: {message.get('name', 'unknown')}")
+                    content = message.get("content", "")
+                    try:
+                        parsed_content = json.loads(content) if isinstance(content, str) else content
+                    except Exception:
+                        parsed_content = content
+                    lines.append(cls.pretty_json(parsed_content))
         return lines
 
     @classmethod
@@ -51,7 +57,8 @@ class ToolDebugPrinter:
     ) -> None:
         if not enabled:
             return
-        lines = cls.extract_lines(previous_messages, updated_messages)
+        mode = os.getenv("DEBUG_TOOL_FLOW_MODE", cls.DEFAULT_MODE)
+        lines = cls.extract_lines(previous_messages, updated_messages, mode=mode)
         if not lines:
             return
         print()

@@ -180,6 +180,10 @@ class TickTickTasksService:
         subtasks = self.create_subtasks(task.id, subtask_titles)
         return {"task": task, "subtasks": subtasks}
 
+    def list_project_tasks_by_known_id(self, project_id: str) -> list[Task]:
+        tasks_payload = self.api.request("GET", f"/project/{project_id}/data").get("tasks", [])
+        return [self.map_task(item) for item in tasks_payload]
+
     def move_task(self, task_id: str, project_id: str) -> Task:
         resolved_project_id = self.projects.resolve_project_id(project_id)
         current = self.get_task_details(task_id)
@@ -192,7 +196,7 @@ class TickTickTasksService:
         if not subtasks:
             subtasks = [
                 task
-                for task in self.list_tasks(project_id=current_project_id)
+                for task in self.list_project_tasks_by_known_id(current_project_id)
                 if task.parent_id == current.id
             ]
         move_items = [
