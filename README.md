@@ -8,92 +8,92 @@ Track: A+D
 ![Tool Calling](https://img.shields.io/badge/Agent-Tool%20Calling-purple)
 ![GTD Clarify](https://img.shields.io/badge/Workflow-GTD%20Clarify-lightgrey)
 
-CLI AI agent for TickTick that can inspect tasks, find overload, clarify vague to-dos, and update the task system through real tool calls.
+CLI AI-агент для TickTick, который умеет просматривать задачи, находить перегруз, уточнять расплывчатые todo и изменять состояние задач через реальные tool calls.
 
-The project was built as an agent prototype around the GTD "Clarify" stage: instead of only chatting about productivity, the assistant can read the current task state in TickTick, suggest concrete next actions, and create or update tasks directly.
+Проект сделан как прототип агента для этапа GTD Clarify: вместо обычного “чата про продуктивность” ассистент видит текущее состояние задач в TickTick, предлагает конкретные следующие действия и может сразу создавать или обновлять задачи.
 
 ## Highlights
 
-- TickTick-connected agent with real read/write actions through tool calling.
-- Focus on GTD Clarify: detects oversized, vague, and overdue tasks.
-- Supports task creation, updates, moves, completion, project listing, and subtask creation.
-- Handles multi-project task search and Inbox aliasing for more stable task operations.
-- Local CLI workflow with Docker-based startup and OAuth login flow.
-- Includes fallback model support through OpenRouter.
+- AI-агент с реальными read/write действиями в TickTick через tool calling.
+- Фокус на GTD Clarify: находит слишком крупные, нечеткие и просроченные задачи.
+- Поддерживает создание, обновление, перенос, завершение задач и работу с подзадачами.
+- Учитывает многопроектный поиск и alias для Inbox, чтобы снизить количество неоднозначных сценариев.
+- Работает локально в CLI, запускается через Docker и поддерживает OAuth-логин в TickTick.
+- Поддерживает fallback-модели через OpenRouter.
 
-## Problem
+## Проблема
 
-Personal task lists often degrade into a backlog of vague intentions:
+Списки задач быстро превращаются в неструктурированный бэклог:
 
-- tasks are too large to start;
-- titles are not actionable;
-- deadlines become stale;
-- users lose visibility into near-term overload.
+- задачи слишком большие, чтобы к ним было легко приступить;
+- названия не описывают конкретное действие;
+- сроки устаревают и теряют смысл;
+- становится сложно заметить перегруз на ближайшие дни.
 
-A plain LLM chat is not enough here, because useful assistance requires access to the real state of the task system and the ability to modify it safely.
+Обычного LLM-чата здесь недостаточно: чтобы быть полезным, агент должен не только советовать, но и работать с реальным состоянием задач и уметь безопасно их изменять.
 
-## Solution
+## Решение
 
-This repository implements a CLI agent that combines:
+В этом репозитории реализован CLI-агент, который объединяет:
 
-1. LLM reasoning via OpenRouter
-2. TickTick API integration with OAuth
-3. a tool registry that exposes structured task operations to the model
-4. runtime context rules for dates, timezone handling, and safer task disambiguation
+1. LLM-рассуждение через OpenRouter
+2. интеграцию с TickTick API через OAuth
+3. реестр инструментов, который предоставляет модели структурированные операции над задачами
+4. runtime-контекст для дат, таймзоны и более безопасного разрешения неоднозначных запросов
 
-The result is an assistant that can both analyze a task backlog and act on it.
+В результате агент может не только анализировать бэклог, но и сразу выполнять действия в таск-менеджере.
 
-## Core Capabilities
+## Основные возможности
 
-- Create a task
-- Create a task with subtasks
-- List tasks
-- Get task details
-- Create subtasks under an existing task
-- Update task fields
-- Update a task by text search when the exact id is unknown
-- List projects
-- List upcoming tasks
-- Move a task between projects
-- Mark a task as completed
+- Создание задачи
+- Создание задачи вместе с подзадачами
+- Просмотр списка задач
+- Получение деталей конкретной задачи
+- Создание подзадач для существующей задачи
+- Обновление полей задачи
+- Обновление задачи по текстовому поиску, если точный `task_id` неизвестен
+- Просмотр проектов
+- Просмотр ближайших задач
+- Перенос задачи между проектами
+- Завершение задачи
 
 ## GTD Clarify Workflow
 
-The system prompt is tuned for a concrete productivity scenario:
+Системный промпт настроен под конкретный сценарий продуктивности:
 
-- show the user their tasks;
-- identify tasks that are too large;
-- point out non-actionable task titles;
-- highlight overdue items;
-- surface possible short-term overload when too many difficult tasks cluster together.
+- показать пользователю все задачи;
+- выделить слишком крупные задачи;
+- указать на названия, которые не являются конкретными действиями;
+- подсветить просроченные задачи;
+- предупредить о возможном перегрузе, если на 2-3 дня скапливается слишком много сложных задач.
 
-This makes the project more than a generic "chat with API" demo. It is a domain-shaped agent with an explicit operational workflow.
+За счет этого проект выглядит не как абстрактный “чат с API”, а как агент с конкретной доменной логикой и понятным workflow.
 
-## Architecture
+## Архитектура
 
 ```text
-User input
-  -> CLI session
+Пользовательский запрос
+  -> CLI-сессия
   -> OpenRouter chat completion
-  -> tool selection by the model
+  -> выбор инструмента моделью
   -> TickTick provider
-  -> task/project operations
-  -> formatted answer in the terminal
+  -> операции над задачами и проектами
+  -> форматированный ответ в терминале
 ```
 
-## Repository Structure
+## Структура репозитория
 
 ```text
 app/
-  chat/                System prompt and chat session entrypoints
-  cli/                 Interactive CLI session and local commands
-  config/              First-run setup and config bootstrap
-  domain/              Pydantic models for tasks, projects, and app config
-  llm/                 OpenRouter client and tool loop
-  providers/ticktick/  TickTick OAuth, API client, mapping, and services
-  storage/             Local config persistence
-  tools/               Tool registry, handlers, search, and presentation layer
-  utils/               JSON and timezone helpers
+  chat/                Системный промпт и entrypoint логики диалога
+  cli/                 Интерактивная CLI-сессия и локальные команды
+  config/              Инициализация конфигурации при первом запуске
+  domain/              Pydantic-модели задач, проектов и конфигурации
+  llm/                 OpenRouter client и tool loop
+  providers/ticktick/  OAuth, API client, mapping и сервисы TickTick
+  storage/             Локальное сохранение конфигурации
+  tools/               Реестр инструментов, handlers, поиск и presentation layer
+  utils/               Вспомогательные утилиты для JSON и таймзоны
 
 config.local.example.json
 compose.yaml
@@ -102,7 +102,7 @@ REFLECTION.md
 Spec.md
 ```
 
-## Tech Stack
+## Технологии
 
 - Python 3.10+
 - Pydantic
@@ -112,7 +112,7 @@ Spec.md
 - TickTick API
 - Docker Compose
 
-## Getting Started
+## Запуск
 
 ### Docker
 
@@ -121,67 +121,67 @@ docker compose build --no-cache app
 docker compose run --rm --service-ports app
 ```
 
-On the first run the app will:
+При первом запуске приложение:
 
-- ask for your OpenRouter API key;
-- ask for TickTick OAuth credentials;
-- open or print the TickTick OAuth authorization URL;
-- save the local config in `config.local.json`.
+- запросит OpenRouter API key;
+- запросит OAuth-данные TickTick;
+- откроет или выведет ссылку на авторизацию TickTick;
+- сохранит локальную конфигурацию в `config.local.json`.
 
-### Local Python
+### Локально через Python
 
 ```bash
 pip install -e .
 python -m app
 ```
 
-## Configuration
+## Конфигурация
 
-See [`config.local.example.json`](./config.local.example.json) for the expected local configuration format.
+Пример локальной конфигурации находится в [`config.local.example.json`](./config.local.example.json).
 
-Important notes:
+Важно:
 
-- `config.local.json` is intentionally excluded from git because it contains local secrets and tokens.
-- the default TickTick Inbox reference is handled through the alias `"inbox"`;
-- user timezone is used for relative dates like "today" and "tomorrow".
+- `config.local.json` исключен из git, так как содержит локальные токены и секреты;
+- Inbox обрабатывается через alias `"inbox"`;
+- пользовательская таймзона используется для интерпретации относительных дат вроде “сегодня” и “завтра”.
 
-## Key Files
+## Ключевые файлы
 
-- [`app/cli/session.py`](./app/cli/session.py) - main interactive CLI loop
-- [`app/chat/prompts.py`](./app/chat/prompts.py) - domain-specific system prompt
-- [`app/llm/openrouter.py`](./app/llm/openrouter.py) - model client, retries, fallback models, tool loop
-- [`app/tools/registry.py`](./app/tools/registry.py) - tool registration and execution
-- [`app/tools/handlers.py`](./app/tools/handlers.py) - task-oriented tool handlers
-- [`app/tools/task_search.py`](./app/tools/task_search.py) - disambiguation logic for task updates by search
-- [`app/providers/ticktick/client.py`](./app/providers/ticktick/client.py) - high-level TickTick provider
-- [`app/providers/ticktick/tasks.py`](./app/providers/ticktick/tasks.py) - task CRUD, moves, completion, subtask flow
-- [`app/providers/ticktick/oauth.py`](./app/providers/ticktick/oauth.py) - OAuth login and localhost callback flow
+- [`app/cli/session.py`](./app/cli/session.py) - основной цикл интерактивной CLI-сессии
+- [`app/chat/prompts.py`](./app/chat/prompts.py) - системный промпт с доменной логикой
+- [`app/llm/openrouter.py`](./app/llm/openrouter.py) - клиент модели, fallback-модели, retry-логика и tool loop
+- [`app/tools/registry.py`](./app/tools/registry.py) - регистрация и исполнение инструментов
+- [`app/tools/handlers.py`](./app/tools/handlers.py) - обработчики task-oriented операций
+- [`app/tools/task_search.py`](./app/tools/task_search.py) - логика разрешения неоднозначностей при поиске задачи
+- [`app/providers/ticktick/client.py`](./app/providers/ticktick/client.py) - high-level provider для TickTick
+- [`app/providers/ticktick/tasks.py`](./app/providers/ticktick/tasks.py) - CRUD по задачам, переносы, завершение и работа с подзадачами
+- [`app/providers/ticktick/oauth.py`](./app/providers/ticktick/oauth.py) - OAuth-авторизация и localhost callback flow
 
-## What Makes It Interesting
+## Что здесь интересно с инженерной точки зрения
 
-- The agent does not ask the user for internal TickTick IDs when it can resolve them itself.
-- Inbox handling is normalized through a dedicated alias to reduce ambiguity.
-- The tool loop supports multiple model attempts and fallback behavior for OpenRouter errors.
-- Task presentation is separated from raw API payloads, which keeps model-facing outputs cleaner.
-- The agent is intentionally shaped around a concrete GTD workflow instead of being a generic assistant shell.
+- Агент не просит у пользователя внутренние идентификаторы TickTick, если может найти их сам.
+- Inbox нормализован через отдельный alias, чтобы уменьшить количество ошибок в проектных ссылках.
+- Tool loop умеет работать с несколькими моделями и fallback-логикой при ошибках OpenRouter.
+- Представление задач отделено от сырых API payload, благодаря чему модель получает более чистый и стабильный контекст.
+- Агент спроектирован вокруг узкого GTD-сценария, а не как универсальная оболочка для чата.
 
-## Known Limitations
+## Ограничения
 
-- Multi-step task workflows can still be fragile on faster/smaller models.
-- The project is optimized for a CLI prototype, not for production-grade security or observability.
-- Reliable behavior depends on correct TickTick OAuth setup.
-- There is no dedicated test suite in the repository yet.
+- Многошаговые сценарии все еще могут быть нестабильны на быстрых и небольших моделях.
+- Это CLI-прототип, а не production-ready система с полноценной безопасностью и observability.
+- Надежность зависит от корректной настройки TickTick OAuth.
+- В репозитории пока нет полноценного набора тестов.
 
-## Resume-Friendly Summary
+## Что показывает проект в резюме
 
-This project demonstrates:
+Этот проект демонстрирует:
 
-- LLM agent design with tool calling
-- external API integration with OAuth
-- structured action execution against a real productivity system
-- prompt design for a narrow domain workflow
-- practical handling of ambiguity, retries, fallbacks, and date/time context
+- проектирование LLM-агента с tool calling;
+- интеграцию с внешним API через OAuth;
+- выполнение структурированных действий в реальной продуктивной системе;
+- prompt design под узкий доменный workflow;
+- практическую работу с неоднозначностью, fallback-стратегиями, retry-логикой и датами.
 
 ## Reflection
 
-The original project reflection is available in [`REFLECTION.md`](./REFLECTION.md).
+Исходная рефлексия по проекту находится в [`REFLECTION.md`](./REFLECTION.md).
