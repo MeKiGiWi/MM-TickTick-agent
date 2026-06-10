@@ -7,5 +7,10 @@ __MACOSX/
 dist/
 build/
 *.pyc
+.DS_Store
+.idea/
+.vscode/
+.env.local
+.python-version
 config.local.json
 .env
